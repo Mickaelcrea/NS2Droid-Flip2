@@ -68,7 +68,7 @@ import javax.net.ssl.HttpsURLConnection;
 final class Updater {
     private Updater() {}
 
-    static final String REPO = "moceure/BananaNative";
+    static final String REPO = "hidayat077/NS2Native";
     private static final String TAG = "nxupdate";
     private static final long MAX_APK = 1L << 30;
     private static final String ACTION = ".UPDATE_INSTALL_STATUS";
@@ -193,7 +193,7 @@ final class Updater {
     /** Settings › Updates › Check for updates: the popup when a newer release exists, else "You're up to date" */
     static void checkNow(Activity a) {
         if (!available(a)) {
-            msg(a, "Updates", "Only the release app (dev.bananative.android) checks for updates. A test app checks when update.txt in its files folder names repo= or url=.");
+            msg(a, "Updates", "Only the release app (dev.ns2native.android) checks for updates. A test app checks when update.txt in its files folder names repo= or url=.");
             return;
         }
         int[] cur = UpdateCheck.appVersion(version(a));
@@ -381,7 +381,7 @@ final class Updater {
         if (!a.getPackageManager().canRequestPackageInstalls()) {
             pending = apk;
             new AlertDialog.Builder(a).setTitle("Allow installs")
-                    .setMessage("To install the update, allow Banana Native to install apps (\"Install unknown apps\"), then come back.")
+                    .setMessage("To install the update, allow NS2Native to install apps (\"Install unknown apps\"), then come back.")
                     .setPositiveButton("Open settings", (d, w) -> a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.getPackageName()))))
                     .setNegativeButton("Cancel", (d, w) -> { pending = null; apk.delete(); })
                     .setCancelable(false).show();

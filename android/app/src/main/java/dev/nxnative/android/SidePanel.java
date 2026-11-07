@@ -112,7 +112,7 @@ final class SidePanel extends FrameLayout {
 
     private void build() {
         TextView title = new TextView(act);
-        title.setText("Banana Native");
+        title.setText("NS2Native");
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextSize(20);
         box.addView(title);

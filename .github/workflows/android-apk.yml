@@ -98,7 +98,7 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BananaNative-Android-APK
+          name: NS2Native-Android-APK
           path: |
             android/app/out/*.apk
             android/app/build/outputs/apk/**/*.apk

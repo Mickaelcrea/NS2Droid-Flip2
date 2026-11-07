@@ -62,8 +62,8 @@ final class Signer {
         return b + "@" + c;
     }
 
-    /** The build tag without its mark: "Banana Native &lt;buildId&gt;" (play app), "Banana Native test · &lt;buildId&gt;" (test app) */
-    static String buildTag(boolean play, String buildId) { return "Banana Native " + (play ? "" : "test · ") + buildId; }
+    /** The build tag without its mark: "NS2Native &lt;buildId&gt;" (play app), "NS2Native test · &lt;buildId&gt;" (test app) */
+    static String buildTag(boolean play, String buildId) { return "NS2Native " + (play ? "" : "test · ") + buildId; }
 
     /** The build tag with its mark:"<tag> · official", "<tag> · unofficial build", or the tag alone (test app) */
     static String tag(String tag, boolean play, String[] signers) {
