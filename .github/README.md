@@ -4,77 +4,80 @@
 
 Play your own copies of **Donkey Kong Bananza**, **Pokémon Pokopia**, and **Mario Kart World** natively on Android.
 
-**NS2Native** adalah fork dari [BananaNative](https://github.com/moceure/BananaNative) (port Android dari [nxnative](https://github.com/seedds/nxnative) oleh seedds) yang difokuskan dan dioptimalkan secara khusus untuk perangkat berspesifikasi **Snapdragon 870 dengan RAM 8 GB** (arsitektur CPU ARMv8.2-A, GPU Adreno 650).
+**NS2Native** is a fork of [BananaNative](https://github.com/moceure/BananaNative) (the Android port of [nxnative](https://github.com/seedds/nxnative) by seedds) specifically focused on and optimized for **Snapdragon 870 devices with 8 GB RAM** (ARMv8.2-A CPU architecture, Adreno 650 GPU).
 
-Proyek ini bukan emulator: kode biner 64-bit ARM dari game berjalan langsung secara native di CPU perangkat, dengan grafis Switch 2 di-rebuild menggunakan Vulkan. Tidak ada file game, key, atau firmware yang disertakan dalam repositori ini maupun aplikasi.
+This is not an emulator: the game's own 64-bit ARM code runs directly on the device's CPU, with Switch 2 graphics rebuilt on Vulkan. No game files, keys, or firmware are included in this repository or in the application.
 
 > [!NOTE]
-> **Fokus & Optimasi untuk Snapdragon 870 / 8GB RAM:**
-> - **ARMv8.2-A PAC Instruction Stripping (`scripts/fix_armv82_pac.py`)**: CPU ARMv8.2 (seperti Snapdragon 870, 865, 855 dengan Cortex-A77/A76) memicu `SIGILL` (Illegal Instruction crash) ketika mengeksekusi instruksi ARMv8.3 Pointer Authentication (`retab`, `retaa`, `pacia`, `xpaci`). Fork ini secara otomatis mem-patch biner hasil rewrite agar aman dijalankan pada prosesor ARMv8.2.
-> - **Opsi Resolusi 540p & 360p**: Menambahkan opsi resolusi lebih ringan (Phone 540p / 0.5x dan Phone 360p / 0.33x) di Settings dan In-game panel untuk meringankan beban GPU Adreno 650 agar game tetap lancar dan playable.
-> - **Efisiensi Penggunaan RAM (`shader_split.py`)**: Pemisahan shader dioptimalkan dengan mekanisme disk streaming agar tidak memicu Out-Of-Memory (OOM) pada perangkat dengan RAM 8 GB.
-> - **Linux & Cloud Packaging**: Wrapper `dmsh_xlate` berbasis .NET runtime dan integrasi GitHub Actions workflow untuk membangun APK langsung dari cloud tanpa membebani perangkat lokal.
+> **Key Focus & Optimizations for Snapdragon 870 / 8 GB RAM:**
+> - **ARMv8.2-A PAC Instruction Stripping (`scripts/fix_armv82_pac.py`)**: ARMv8.2 CPUs (such as Qualcomm Snapdragon 870, 865, 855 with Cortex-A77/A76 cores) trigger `SIGILL` (Illegal Instruction crash) when encountering ARMv8.3 Pointer Authentication instructions (`retab`, `retaa`, `pacia`, `xpaci`). This fork automatically patches rewritten binaries to ensure stable execution on ARMv8.2 hardware.
+> - **Lightweight Resolution Options (540p & 360p)**: Added lower rendering resolutions (Phone 540p / 0.5x and Phone 360p / 0.33x) in Settings and the in-game side panel to reduce GPU load on the Adreno 650, maintaining smooth and playable framerates.
+> - **Memory Efficiency for 8 GB RAM (`shader_split.py`)**: Shader splitting has been optimized with a streaming disk write mechanism instead of holding all records in memory, preventing Out-Of-Memory (OOM) termination on 8 GB RAM devices.
+> - **Linux & Cloud Packaging**: Cross-platform .NET runtime wrapper for `dmsh_xlate` and automated GitHub Actions workflows to compile APKs directly in the cloud without burdening local hardware.
 
 ## Games
 
 | Game | Title ID | Version | Status |
 |---|---|---|---|
-| Donkey Kong Bananza | `040074A01BF12000` | update 458752 | Works |
-| Pokémon Pokopia | `0400A3A01EE4C000` | update 655360 | Works (~60 fps) |
+| Donkey Kong Bananza | `040074A01BF12000` | update 458752 | Playable |
+| Pokémon Pokopia | `0400A3A01EE4C000` | update 655360 | Playable (~60 fps) |
 | Mario Kart World | `0400C3F00006E000` | 1.8.0 | In progress (experimental) |
 
-Versi game lain yang tidak sesuai akan ditolak dengan pesan yang menampilkan versi yang dibutuhkan.
+Other game versions will be refused with a message displaying the required version.
 
 ## What you need
 
-- **Perangkat**: Android 13 atau lebih baru, 64-bit ARM. Dioptimalkan untuk **Snapdragon 870 dengan 8 GB RAM** (Adreno 650), atau SoC Snapdragon serupa (SD 865 / 865+ / 888 / 8 Gen 1+).
-- **Custom GPU Driver**: Disarankan menggunakan driver Turnip (Mesa Turnip Adreno) untuk performa dan stabilitas Vulkan terbaik pada Adreno 650.
-- **Game Dump**: Dump game milik Anda sendiri dalam bentuk folder (`base/`, `updates/`, `dlc/`). File NSP/XCI tidak bekerja langsung untuk game Switch 2.
+- **Device**: Android 13 or newer, 64-bit ARM. Optimized for **Snapdragon 870 with 8 GB RAM** (Adreno 650), or comparable Snapdragon chips (SD 865 / 865+ / 888 / 8 Gen 1+).
+- **Custom GPU Driver**: Mesa Turnip driver (Adreno) is strongly recommended for the best Vulkan performance and stability on Adreno 650.
+- **Game Dump**: Your own dump of the game as a folder structure (`base/`, `updates/`, `dlc/`). NSP and XCI container files do not work directly for Switch 2 titles.
   ```
   <game>/
     base/                  exefs/ and romfs/
     updates/<version>/     the update, if the version above is one
     dlc/<title id>/<n>/    extra content, if you have it
   ```
-- Ruang penyimpanan kosong sekitar 1-2 GB di HP untuk pack game yang telah disiapkan.
-- Opsional: `Lossless.dll` dari Lossless Scaling untuk fitur frame generation (tidak disertakan).
+- Free storage: Around 1-2 GB of free internal storage on the phone for the prepared game pack.
+- Optional: Your own `Lossless.dll` from Lossless Scaling for Windows to enable frame generation (not included).
 
 ## Setup & How to start
 
-Setiap game disiapkan (prepare) satu kali: kodenya di-rewrite untuk Android (termasuk penyesuaian instruksi ARMv8.2) dan shadernya diterjemahkan untuk Vulkan.
+Each game is prepared once: its code is rewritten for Android (including ARMv8.2 PAC instruction stripping) and its shaders are translated to Vulkan.
 
-### Melalui Perangkat (On-device Prepare)
-1. Salin folder game dump ke penyimpanan HP (misal: `Switch2/DonkeyKongBananza`).
-2. Install APK **NS2Native** dari tab [Actions](https://github.com/hidayat077/NS2Native/actions) / [Releases](https://github.com/hidayat077/NS2Native/releases).
-3. Buka **NS2Native**, berikan izin **All files access**.
-4. Ketuk **Add game**, pilih folder game, lalu ketuk **Prepare**. Proses berjalan di background service dengan notifikasi status.
-5. Ketuk **Play** setelah proses selesai.
+### On-Device Preparation (Phone Only)
+1. Copy your game dump folder to phone storage (e.g., `Switch2/DonkeyKongBananza`).
+2. Install the **NS2Native** APK from the [Actions](https://github.com/hidayat077/NS2Native/actions) / [Releases](https://github.com/hidayat077/NS2Native/releases) tab.
+3. Open **NS2Native** and grant **All files access** permission.
+4. Tap **Add game**, select the game folder, and tap **Prepare**. The process runs in a foreground background service with progress notifications.
+5. Tap **Play** once preparation completes.
 
-### Menggunakan PC / Mac (Lebih Cepat)
-1. Siapkan Python dan dependensi (`pip install "capstone>=5,<6" lz4`).
-2. Jalankan packer:
+### Preparation via PC / Mac (Faster)
+1. Set up Python with required dependencies:
+   ```sh
+   pip install "capstone>=5,<6" lz4
+   ```
+2. Run the packer script:
    ```sh
    python3 scripts/pack_android.py /path/to/<game>
    ```
-   *(Skrip akan otomatis menjalankan `fix_armv82_pac.py` untuk membersihkan instruksi ARMv8.3 PAC).*
-3. Salin folder game dan folder pack hasil kompilasi (`<title_id>-work/android-pack`) ke penyimpanan HP.
-4. Buka aplikasi **NS2Native**, pilih folder game, dan mainkan.
+   *(The script automatically executes `fix_armv82_pac.py` to strip ARMv8.3 PAC instructions).*
+3. Copy the game folder and the generated pack folder (`<title_id>-work/android-pack`) to your phone's storage.
+4. Open **NS2Native**, add the game folder, and launch.
 
 ## Features
 
-- **Optimalisasi ARMv8.2 & Adreno 650**: PAC stripper bawaan dan pilihan resolusi dinamis hingga 540p / 360p.
-- **Fold-aware layout**: Layout terpisah untuk layar luar dan layar dalam pada ponsel lipat.
-- **Frame generation (LSFG)**: Dukungan frame generation terintegrasi (2x, 3x, 4x, atau target 60/90/120 fps) menggunakan `Lossless.dll`.
-- **FSR 1 Upscaling**: AMD FidelityFX Super Resolution 1 dengan pengaturan ketajaman (sharpness) untuk resolusi rendah.
-- **Touch Controls & Gamepad**: Kontrol layar transparan yang dapat disesuaikan posisinya serta dukungan penuh kontroller/gamepad eksternal.
-- **In-Game Panel & Performance Overlay**: Pantau fps, frame time, GPU time, suhu baterai, clock CPU, dan penggunaan RAM secara realtime.
+- **ARMv8.2 & Adreno 650 Optimizations**: Built-in PAC stripping and custom resolution scaling down to 540p / 360p.
+- **Fold-Aware UI**: Adaptive layout for foldable devices, switching between outer and inner screen configurations dynamically.
+- **Frame Generation (LSFG)**: Lossless Scaling frame generation integration (2x, 3x, 4x, or target 60/90/120 fps) using your own `Lossless.dll`.
+- **FSR 1 Upscaling**: AMD FidelityFX Super Resolution 1 with adjustable sharpness for crisp image presentation at lower resolutions.
+- **On-Screen Touch Controls & Gamepad**: Translucent customizable on-screen controller overlay with full physical gamepad support.
+- **In-Game Side Panel & Performance Overlay**: Real-time HUD monitoring fps, frame time, GPU render time, battery temperature, CPU frequencies, and RAM consumption.
 
-## Credits and licence
+## Credits and License
 
-- Fork dari **[BananaNative](https://github.com/moceure/BananaNative)** oleh moceure.
-- Dibangun di atas **[nxnative](https://github.com/seedds/nxnative)** oleh seedds (MIT).
-- Biner shader translator diturunkan dari Ryujinx, switch2mac (azmasm), dan Eglantine (djihads80).
-- Frame generation di-porting dari Eden dan lsfg-vk.
+- Forked from **[BananaNative](https://github.com/moceure/BananaNative)** by moceure.
+- Built on top of **[nxnative](https://github.com/seedds/nxnative)** by seedds (MIT).
+- Shader translator derived from Ryujinx, switch2mac (azmasm), and Eglantine (djihads80).
+- Frame generation ported from Eden and lsfg-vk.
 
-Aplikasi Android ini berlisensi **GPL-3.0-or-later** ([android/NOTICE.md](../android/NOTICE.md)).
-Gunakan game yang Anda miliki secara sah. Dilarang meminta atau membagikan file game, key, atau dump.
+The Android application is licensed under **GPL-3.0-or-later** ([android/NOTICE.md](../android/NOTICE.md)).
+Only use dumps of games you legitimately own. Do not ask for or share copyrighted game files, keys, or ROMs.
