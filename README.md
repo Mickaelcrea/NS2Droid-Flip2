@@ -1,28 +1,33 @@
-# Banana Native
+# NS2Native
 
-Play your own copies of **Donkey Kong Bananza** and **Mario Kart World** natively on Android.
+Play your own copies of **Donkey Kong Bananza**, **Pokémon Pokopia**, and **Mario Kart World** natively on Android.
 
-It is not an emulator: the game's own code runs directly on the phone's CPU, with the Switch 2 graphics rebuilt on Vulkan. Banana Native is the Android port of [nxnative](https://github.com/seedds/nxnative) by seedds. Nothing from any game is in this repository or in the app, and the project is not affiliated with Nintendo, any game publisher, nxnative or Eden.
+**NS2Native** adalah fork dari [BananaNative](https://github.com/moceure/BananaNative) (port Android dari [nxnative](https://github.com/seedds/nxnative) oleh seedds) yang difokuskan dan dioptimalkan secara khusus untuk perangkat berspesifikasi **Snapdragon 870 dengan RAM 8 GB** (arsitektur CPU ARMv8.2-A, GPU Adreno 650).
 
-> [!CAUTION]
-> Only download the app from this page's **Releases**. Copies elsewhere are not made by me.
+Proyek ini bukan emulator: kode biner 64-bit ARM dari game berjalan langsung secara native di CPU perangkat, dengan grafis Switch 2 di-rebuild menggunakan Vulkan. Tidak ada file game, key, atau firmware yang disertakan dalam repositori ini maupun aplikasi.
 
-> [!IMPORTANT]
-> AI disclaimer: most of the Android port was written with an AI coding assistant (Claude), then tested by hand on one phone. It is experimental and has bugs.
+> [!NOTE]
+> **Fokus & Optimasi untuk Snapdragon 870 / 8GB RAM:**
+> - **ARMv8.2-A PAC Instruction Stripping (`scripts/fix_armv82_pac.py`)**: CPU ARMv8.2 (seperti Snapdragon 870, 865, 855 dengan Cortex-A77/A76) memicu `SIGILL` (Illegal Instruction crash) ketika mengeksekusi instruksi ARMv8.3 Pointer Authentication (`retab`, `retaa`, `pacia`, `xpaci`). Fork ini secara otomatis mem-patch biner hasil rewrite agar aman dijalankan pada prosesor ARMv8.2.
+> - **Opsi Resolusi 540p & 360p**: Menambahkan opsi resolusi lebih ringan (Phone 540p / 0.5x dan Phone 360p / 0.33x) di Settings dan In-game panel untuk meringankan beban GPU Adreno 650 agar game tetap lancar dan playable.
+> - **Efisiensi Penggunaan RAM (`shader_split.py`)**: Pemisahan shader dioptimalkan dengan mekanisme disk streaming agar tidak memicu Out-Of-Memory (OOM) pada perangkat dengan RAM 8 GB.
+> - **Linux & Cloud Packaging**: Wrapper `dmsh_xlate` berbasis .NET runtime dan integrasi GitHub Actions workflow untuk membangun APK langsung dari cloud tanpa membebani perangkat lokal.
 
 ## Games
 
-| Game | Version | Status |
-|---|---|---|
-| Donkey Kong Bananza | update 458752 | Plays |
-| Mario Kart World | 1.8.0 | Experimental: gets in game and drives, with graphics problems (see known issues) |
+| Game | Title ID | Version | Status |
+|---|---|---|---|
+| Donkey Kong Bananza | `040074A01BF12000` | update 458752 | Plays |
+| Pokémon Pokopia | `0400A3A01EE4C000` | update 655360 | Plays (~60 fps) |
+| Mario Kart World | `0400C3F00006E000` | 1.8.0 | In progress (experimental) |
 
-Other versions are refused with a message that says which version the app needs.
+Versi game lain yang tidak sesuai akan ditolak dengan pesan yang menampilkan versi yang dibutuhkan.
 
 ## What you need
 
-- Android 13 or newer, a 64-bit phone. A Snapdragon phone (Adreno GPU) with 12-16 GB of RAM; tested only on a Snapdragon 8 Elite Gen 5 (Adreno 840) with 16 GB.
-- Your own game, dumped as a folder. No keys or firmware; NSP and XCI files do not work for Switch 2 games. Mario Kart World 1.8.0 is a dump with `base/` only.
+- **Perangkat**: Android 13 atau lebih baru, 64-bit ARM. Dioptimalkan untuk **Snapdragon 870 dengan 8 GB RAM** (Adreno 650), atau SoC Snapdragon serupa (SD 865 / 865+ / 888 / 8 Gen 1+).
+- **Custom GPU Driver**: Disarankan menggunakan driver Turnip (Mesa Turnip Adreno) untuk performa dan stabilitas Vulkan terbaik pada Adreno 650.
+- **Game Dump**: Dump game milik Anda sendiri dalam bentuk folder (`base/`, `updates/`, `dlc/`). File NSP/XCI tidak bekerja langsung untuk game Switch 2.
   ```
   Switch2/
     DonkeyKongBananza/
@@ -30,65 +35,47 @@ Other versions are refused with a message that says which version the app needs.
       updates/<version>/     its update (exefs/, romfs/), if any
       dlc/<title id>/<n>/    extra content, if any
   ```
-- About 1 GB free on the phone for the prepared game (the dump itself is read in place); preparing on the phone needs 2 GB more while it runs.
-- Optional: your own `Lossless.dll` from Lossless Scaling for Windows, for frame generation (not included).
+- Ruang penyimpanan kosong sekitar 1-2 GB di HP untuk pack game yang telah disiapkan.
+- Opsional: `Lossless.dll` dari Lossless Scaling untuk fitur frame generation (tidak disertakan).
 
 ## How to start
 
-Each game is prepared once: its code is rewritten for Android and its shaders are translated for Vulkan. A Mac does it in about 10-15 minutes; the phone can do it by itself, but that takes about an hour per game.
+Setiap game disiapkan (prepare) satu kali: kodenya di-rewrite untuk Android (termasuk penyesuaian instruksi ARMv8.2) dan shadernya diterjemahkan untuk Vulkan.
 
-### On a Mac (recommended)
+### Melalui Perangkat (On-device Prepare)
+1. Salin folder game dump ke penyimpanan HP (misal: `Switch2/DonkeyKongBananza`).
+2. Install APK **NS2Native** dari tab **Actions / Releases**.
+3. Buka **NS2Native**, berikan izin **All files access**.
+4. Ketuk **Add game**, pilih folder game, lalu ketuk **Prepare**. Proses berjalan di background service dengan notifikasi status.
+5. Ketuk **Play** setelah proses selesai.
 
-1. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download) (`brew install --cask dotnet-sdk`) and [micromamba](https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html), and clone this repository.
-2. Make the environment, once (put it on a drive with a few GB free):
+### Menggunakan PC / Mac (Lebih Cepat)
+1. Siapkan Python dan dependensi (`pip install "capstone>=5,<6" lz4`).
+2. Jalankan packer:
    ```sh
-   micromamba create -p ~/bananative-env -f android/environment.yml
+   python3 scripts/pack_android.py /path/to/Switch2/DonkeyKongBananza
    ```
-3. Prepare the game from your dump folder (the one with `base/`):
-   ```sh
-   ~/bananative-env/bin/python scripts/pack_android.py /path/to/Switch2/DonkeyKongBananza
-   ```
-   It writes the pack to `/path/to/Switch2/040074A01BF12000-work/android-pack` (about 250-400 MB), next to the dump.
-4. Copy the game folder to the phone, for example to `Switch2/DonkeyKongBananza`, and the pack next to it as `Switch2/040074A01BF12000-work/android-pack` (only `android-pack`: the rest of the `-work` folder stays on the Mac).
-5. Install the APK from **Releases**, open **Banana Native**, allow **All files access**, tap **Add game** and pick the game folder. The app finds the pack next to it: tap **Play**.
-
-### On the phone only
-
-Donkey Kong Bananza only for now: preparing Mario Kart World on the phone runs out of memory in the code rewrite (fix planned for the next version), so prepare it on a Mac.
-
-1. Copy your dump folder to the phone (for example `Switch2/DonkeyKongBananza`).
-2. Install the APK from **Releases**, open **Banana Native** and allow **All files access**.
-3. **Add game**, pick the game folder, and tap **Prepare**. It runs in the background with a notification and can be paused; keep the phone charging. Nothing is uploaded.
-4. Tap **Play** when it is done.
-
-Settings (the gear) › **Readiness check** tells you what your phone is missing, with a button to fix most items.
-
-Saves and prepared packs are in the app's own storage (`Android/data/<app>/files/saves` and `packs`). When you uninstall, Android asks whether to keep that data. A game's ⋯ menu backs saves up to `Switch2/save-backups/<title ID>/` (kept when the app is uninstalled) and restores them, and exports or imports the pack as one .zip. A save from version 0.1.0 or older, in `Switch2/saves/<title ID>/`, is copied into the app at the game's next start; that folder is left as it was.
+   *(Skrip akan otomatis menjalankan `fix_armv82_pac.py` untuk membersihkan instruksi ARMv8.3 PAC).*
+3. Salin folder game dan folder pack hasil kompilasi (`<title_id>-work/android-pack`) ke penyimpanan HP.
+4. Buka aplikasi **NS2Native**, pilih folder game, dan mainkan.
 
 ## Features
 
-- **Frame generation (LSFG):** Lossless Scaling's frame generation is built in: 2x, 3x or 4x, or a target of 60 / 90 / 120 fps. It needs your own `Lossless.dll` (put it in `Download/` or pick it in Settings › Frame generation).
-- **Foldable phones:** the on-screen controls keep one layout per screen (outer and inner) and switch when you fold or unfold, with no restart. On a square inner screen the picture can sit at the top with the controls below it.
-- On-screen controls with a layout editor, gamepads, a frame-rate cap (the game's own, 60, 30, 20, 15), the game resolution (phone 1080p or the game's own), save backups, pause on return, and a performance overlay (fps, GPU time, throttling, battery).
-
-## Known issues
-
-- Mario Kart World: prepare it on a Mac (on the phone its code rewrite runs out of memory). Some road and ground textures may be missing and trees can flicker. Memory is tight on 16 GB phones.
-- The phone gets hot, and the frame rate drops when it throttles. Let it cool down.
-- A new version of the app can need its shaders made again (the app says so and offers Prepare); a pack from an older version is not used yet.
-- Tested on one phone only.
-
-## Building
-
-See [android/README.md](android/README.md). Releases are built with `-PnxLive=true` and the release key (never in this repository).
+- **Optimalisasi ARMv8.2 & Adreno 650**: PAC stripper bawaan dan pilihan resolusi dinamis hingga 540p / 360p.
+- **Frame generation (LSFG)**: Dukungan frame generation terintegrasi (2x, 3x, 4x, atau target 60/90/120 fps) menggunakan `Lossless.dll`.
+- **FSR 1 Upscaling**: AMD FidelityFX Super Resolution 1 dengan pengaturan ketajaman (sharpness) untuk resolusi rendah.
+- **Touch Controls & Gamepad**: Kontrol layar transparan yang dapat disesuaikan posisinya serta dukungan penuh kontroller/gamepad eksternal.
+- **In-Game Panel & Performance Overlay**: Pantau fps, frame time, GPU time, suhu baterai, clock CPU, dan penggunaan RAM secara realtime.
 
 ## Credits and licence
 
-Built on **[nxnative](https://github.com/seedds/nxnative)** by seedds (MIT) and everything it credits below. Mario Kart World findings from [kartnative](https://github.com/pahorema/kartnative) (pahorema) and [switch2mac](https://github.com/azmasm/switch2mac) (azmasm); task and mesh shader lowering from [Eglantine](https://github.com/djihads80/eglantine) via switch2mac; frame generation ported from [Eden](https://git.eden-emu.dev/eden-emu/eden) and [lsfg-vk](https://github.com/PancakeTAS/lsfg-vk).
+- Fork dari **[BananaNative](https://github.com/moceure/BananaNative)** oleh moceure.
+- Dibangun di atas **[nxnative](https://github.com/seedds/nxnative)** oleh seedds (MIT).
+- Biner shader translator diturunkan dari Ryujinx, switch2mac (azmasm), dan Eglantine (djihads80).
+- Frame generation di-porting dari Eden dan lsfg-vk.
 
-The Android app is **GPL-3.0-or-later** as a whole ([android/NOTICE.md](android/NOTICE.md)); each release is built from its tagged commit. nxnative's own files keep their MIT licence.
-
-Only use games you own. Don't ask for games, keys or dumps.
+Aplikasi Android ini berlisensi **GPL-3.0-or-later** ([android/NOTICE.md](android/NOTICE.md)).
+Gunakan game yang Anda miliki secara sah. Dilarang meminta atau membagikan file game, key, atau dump.
 
 ---
 
