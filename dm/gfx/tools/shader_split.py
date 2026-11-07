@@ -3028,23 +3028,31 @@ def main():
     os.makedirs(pkg, exist_ok=True)
     for f in os.listdir(pkg):
         if f.endswith('.bin'): os.unlink(os.path.join(pkg, f))
-    recs = collections.defaultdict(list); rows = []; facts = {}; stat = collections.Counter()
-    for key in sorted(keys, key=lambda k: (group(keys[k][0]), keys[k][0], k)):   # the same input gives byte-identical output
-        where, st, ctl, code = keys[key]
-        name = f'{st}_{group(where)}.bin'
-        rec = bytearray(b'BTCDBTCD' + bytes(0x30)); struct.pack_into('<2I', rec, 0x28, len(ctl), len(code)); rec += code + ctl
-        if rec.find(CTL_MAGIC) != 0x38 + len(code): red(f'key {key}: the control magic appears in the code area, dmsh_build would split the record wrongly')
-        if rec.count(b'BTCDBTCD') != 1: red(f'key {key}: the record separator appears inside the record')
-        rows.append((name, len(recs[name]), STAGE_NAME[st], key, where)); recs[name].append(bytes(rec)); stat[st] += 1
-        if st == 'cs':
-            # NVN2: the thread group at +0x58 (32 1 1 in Donkey Kong Bananza's effects); shared memory taken from +0x64, not yet seen nonzero (unverified)
-            at = (0x58, 0x64) if nvn2_ctl(ctl) else (0x748, 0x754)
-            x, y, z = struct.unpack_from('<3I', ctl, at[0]); sh = struct.unpack_from('<I', ctl, at[1])[0]
-            if not x * y * z: red(f'compute shader {key}: control +{at[0]:#x} thread group is 0 ({where})')
-            facts[key] = {'local': [x, y, z], 'shared': (sh + 15) // 16 * 16}
-        if st in ('ts', 'ms'): facts[key] = mesh_facts(key, st, ctl, code, keys, mesh_pairs)
-    for name, rr in recs.items():
-        with open(os.path.join(pkg, name), 'wb') as f: f.write(b''.join(rr))
+    pkg_files = {}
+    pkg_counts = collections.defaultdict(int)
+    rows = []; facts = {}; stat = collections.Counter()
+    try:
+        for key in sorted(keys, key=lambda k: (group(keys[k][0]), keys[k][0], k)):   # the same input gives byte-identical output
+            where, st, ctl, code = keys[key]
+            name = f'{st}_{group(where)}.bin'
+            rec = bytearray(b'BTCDBTCD' + bytes(0x30)); struct.pack_into('<2I', rec, 0x28, len(ctl), len(code)); rec += code + ctl
+            if rec.find(CTL_MAGIC) != 0x38 + len(code): red(f'key {key}: the control magic appears in the code area, dmsh_build would split the record wrongly')
+            if rec.count(b'BTCDBTCD') != 1: red(f'key {key}: the record separator appears inside the record')
+            idx = pkg_counts[name]
+            pkg_counts[name] += 1
+            rows.append((name, idx, STAGE_NAME[st], key, where)); stat[st] += 1
+            if name not in pkg_files:
+                pkg_files[name] = open(os.path.join(pkg, name), 'wb')
+            pkg_files[name].write(rec)
+            if st == 'cs':
+                # NVN2: the thread group at +0x58 (32 1 1 in Donkey Kong Bananza's effects); shared memory taken from +0x64, not yet seen nonzero (unverified)
+                at = (0x58, 0x64) if nvn2_ctl(ctl) else (0x748, 0x754)
+                x, y, z = struct.unpack_from('<3I', ctl, at[0]); sh = struct.unpack_from('<I', ctl, at[1])[0]
+                if not x * y * z: red(f'compute shader {key}: control +{at[0]:#x} thread group is 0 ({where})')
+                facts[key] = {'local': [x, y, z], 'shared': (sh + 15) // 16 * 16}
+            if st in ('ts', 'ms'): facts[key] = mesh_facts(key, st, ctl, code, keys, mesh_pairs)
+    finally:
+        for pf in pkg_files.values(): pf.close()
     with open(mapout, 'w') as f:
         kinds = ' / '.join(k for k, hit in (('BNSH / BAHS', any('#BNSH@' in r[4] or '#BAHS@' in r[4] for r in rows)), ('Unity Shader', any('#var' in r[4] and '#BNSH@' not in r[4] and '#MSHD#' not in r[4] and '#SDF#' not in r[4] and '#GLSLC@' not in r[4] and '#SNVN@' not in r[4] for r in rows)),
                                             ('Retro Studios SNVN', any('#SNVN@' in r[4] for r in rows)),

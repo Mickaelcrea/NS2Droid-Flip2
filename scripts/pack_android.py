@@ -281,7 +281,7 @@ def split_shaders(a, g, vdir, pkg, parts=None):   # parts: the version's (romfs,
     py = shader_python(a.shader_python, split=True)
     tmp = pkg.with_name(pkg.name + '.tmp'); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
     print(f'shaders: splitting the shaders out of {rd} into {pkg} with {py} (a few minutes)', flush=True)
-    env = dict(os.environ, DM_GAME=g.id)
+    env = dict(os.environ, DM_GAME=g.id, J=str(a.J))
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),
                         *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')]], env=env)
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
@@ -312,7 +312,14 @@ def pack_shaders(a, g, work, out, vdir, parts=None):
         print(f'shaders: building the Vulkan library {lib} from {pkg} with {py} (J={a.J}; about 10 minutes on DKB)', flush=True)
         (work / 'android-shaders' / 'work').mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
-        r = subprocess.run([py, str(VK_BUILD), '--target', 'vulkan', str(pkg), str(cache)], env=env)
+        keys = []
+        if (g.dir / 'shader_seen.tsv').is_file() and (g.dir / 'shader_map.tsv').is_file():
+            map_keys_set = map_keys(g.dir / 'shader_map.tsv')
+            seen_lines = (g.dir / 'shader_seen.tsv').read_text().splitlines()
+            keys = sorted({l.split('\t')[0].strip() for l in seen_lines if l.strip() and not l.startswith('#') and l.split('\t')[0].strip() in map_keys_set})
+            if keys:
+                print(f'shaders: building {len(keys)} selected shaders from shader_seen.tsv', flush=True)
+        r = subprocess.run([py, str(VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *keys], env=env)
         if r.returncode: raise Error(f'vk_android_build.py exit code {r.returncode} (a package that lacks the profile\'s shaders stops it: delete {pkg} and the split runs again)')
         if not library_current(lib, g): raise Error(f'vk_android_build.py finished but {lib} is not a full library of {g.id} with the current inputs')
     else: print(f'shaders: {lib} is current (game {g.id}, inputs {dmsh_chain.inputs(g)})')
@@ -381,7 +388,13 @@ def main():
                 raise Error(f'--keep-code: {out} has no complete {", ".join(missing)} (patched.bin and its key): rewrite first')
             print('  modules kept as they are (--keep-code)')
         else:
-            try: rewrite(sys.executable, srcs, out, max(1, a.j), g, a.in_process)
+            try:
+                rewrite(sys.executable, srcs, out, max(1, a.j), g, a.in_process)
+                try:
+                    import fix_armv82_pac
+                    fix_armv82_pac.patch_pack(out)
+                except Exception as pe:
+                    print(f'warning: ARMv8.2 PAC patch failed: {pe}')
             finally: shutil.rmtree(out / '.nup-src', ignore_errors=True)   # the module copies a NUP game's rewrite read (rewriter_src)
         if a.code_only: print(f'done: the modules in {out} (--code-only: pack.tsv and the shaders unchanged)'); return
         if a.keep_code: upgrade_keys(srcs, out, g)   # before the copy below replaces the game.tsv an earlier key was made with (a rewrite run did it in rewrite)
