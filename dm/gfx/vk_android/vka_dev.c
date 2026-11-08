@@ -443,6 +443,13 @@ void nxhost_trim_memory(int level) {
     pthread_mutex_unlock(&g_smu);
     vka_imem_trim();
 #if defined(__ANDROID__)
+#if defined(M_PURGE)
+    mallopt(M_PURGE, 0);
+#else
+    mallopt(-101, 0);
+#endif
+#elif defined(__GLIBC__)
+    extern int malloc_trim(size_t);
     malloc_trim(0);
 #endif
 }
