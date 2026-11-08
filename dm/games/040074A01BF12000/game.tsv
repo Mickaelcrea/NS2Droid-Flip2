@@ -44,6 +44,10 @@ shader_note	Donkey Kong Bananza shaders
 render_cond	on
 # Dynamic resolution (MaintainGpuPercentage: the NDSR rate between NdsrUpscaleMinRate and NdsrUpscaleMaxRate) reads the GPU time between the frame's timestamp reports: each report takes its segment's GPU start / end
 gpu_timestamps	segment
+# Draw passes ordered by the game's own barriers to avoid stalling on 280+ full barriers a frame
+draw_barriers	game
+# Mobile resolution default (720p maintains smooth 30 fps on Adreno 650 with NDSR upscaling)
+android_window	1280x720
 # The window size (the nvnWindow textures the upscaler's output is copied to; the render targets scale with it) is the constant pair two leaf functions of main return (mov w0,#2880 / #1620; ret):
 # the host writes DM_WINDOW_SIZE's size into them at load (loader.c window_apply; the Android launcher's Game resolution: Phone 1080p = 1920x1080), the game's own 2880x1620 without it (the game note, Window size)
 window_fn	e25c90c1c136638885659fd55bf8a03b	0x5bf770	0x5bf780	2880x1620

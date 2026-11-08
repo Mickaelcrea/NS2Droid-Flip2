@@ -12,6 +12,8 @@ A Switch 2 game: update v458752 over the base game, SDK 20.5.19 built for the Sw
 | `romfs_check System/RegionLangMask.txt 4 main` | `game.tsv` | the marker is in the base's RomFS too, so it does not tell an update folder that holds the base's data (or an unpatched update RomFS) from the patched 458752 RomFS. Line 4 of this file is the build ID of the `main` its RomFS was made for (the base's: `100` on line 3 and `a1dd7480…`; 458752's: `320` and `e25c90c1…`). With the base's data the game took the "All" bundle and crashed after the save mount (sig 11 at `main+0x712688`); the Android launcher's Prepare and card now say so instead ([Profile keys](../README.md#keys)) |
 | `window_fn e25c90c1… 0x5bf770 0x5bf780 2880x1620` | `game.tsv` | the window size's two getter functions in update v458752's main and the game's own size: the host writes `DM_WINDOW_SIZE`'s size into them at load ([Window size](#window-size)) |
 | `render_cond on` | `game.tsv` | agl's render buffer binding wraps its clears in render conditions (`SetRenderEnableConditional` at `main+0x12798c`, before the `ClearColor` at `main+0x1279d4`); drawn unconditionally, a clear-only rebinding of the composite target right after the composite draw wiped it before the upscaler read it, and every gameplay frame was black |
+| `draw_barriers game` | `game.tsv` | draw passes ordered by the game's own barriers, avoiding GPU pipeline drains across 280+ full barriers a frame |
+| `android_window 1280x720` | `game.tsv` | default mobile resolution (720p), keeping frame pacing steady on Adreno 650 devices |
 
 ## Files
 

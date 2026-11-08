@@ -45,6 +45,9 @@ final class GameSettings {
         Ui.Setting crp = new Ui.Setting(a, "🧱", "Classic render passes", null).toggle(a, Prefs.classicPasses(a, id), (b, on) -> Prefs.classicPasses(a, id, on));
         crp.value("Render passes instead of dynamic rendering (less CPU a pass on Qualcomm's driver)");
         Ui.add(box, crp.view, 0);
+        Ui.Setting async = new Ui.Setting(a, "⚡", "Asynchronous pipelines", null).toggle(a, Prefs.asyncPipelines(a, id), (b, on) -> Prefs.asyncPipelines(a, id, on));
+        async.value("Compiles new shaders in the background off the frame path, preventing multi-second freezes");
+        Ui.add(box, async.view, 0);
         Ui.Setting ret = new Ui.Setting(a, "⏸️", "Pause on return", null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on));
         ret.value("Coming back from the background, the game waits paused for a tap");
         Ui.add(box, ret.view, 0);

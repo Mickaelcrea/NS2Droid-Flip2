@@ -162,6 +162,9 @@ final class Prefs {
     /** Game settings › Classic render passes (DM_VK_CLASSIC_RP): VkRenderPasses with imageless framebuffers instead of dynamic rendering. Off by default (a GPU loss on Adreno 830 with Turnip, open) */
     static boolean classicPasses(Context c, String titleId) { return of(c).getBoolean(gameKey("vk_classic_rp", titleId), false); }
     static void classicPasses(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("vk_classic_rp", titleId), on).commit(); }
+    /** Game settings › Asynchronous pipelines (DM_VK_PSO_ASYNC=2): compiles new shaders in background threads off the frame path, preventing multi-second freezes */
+    static boolean asyncPipelines(Context c, String titleId) { return of(c).getBoolean(gameKey("pso_async", titleId), true); }
+    static void asyncPipelines(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("pso_async", titleId), on).commit(); }
 
     /**
      * The game's own environment lines (KEY=VALUE, one a line; its Game settings), given to the host after the launcher's settings and env.txt, so they win for
