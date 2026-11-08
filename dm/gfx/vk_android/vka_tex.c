@@ -426,9 +426,9 @@ static vka_img *img_create(const tex_t *t, const vka_fmt *f, uint32_t base) {
                      im->layers, t->d.format, base, b - 1, st); } }
             return im;
         }
-        if (why != 1 || !sparse_sampled(t, f)) { b = base; break; }   // refused for another reason (3: the format has no sparse residency at this shape), or a GPU-written one (drawn into at level 0: no coarser start): dense from base
+        if (why != 1 || !sparse_sampled(t, f)) { b = base; break; }   // refused for another reason (3: the format has no sparse residency at this shape), or a GPU-written one: dense from base, capped if needed
     }
-    uint32_t bd = sparse_sampled(t, f) ? dense_floor(&t->d, &t->L, b) : b;   // (at most DM_VK_SPARSE_DENSE_MB from there)
+    uint32_t bd = (sparse_sampled(t, f) || sparse_gpu(t, f)) ? dense_floor(&t->d, &t->L, b) : b;   // (at most DM_VK_SPARSE_DENSE_MB from there)
     if (bd > b) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16)
         VRED("sparse texture serial %llu %ux%u layers %u format %#x: no residency image; dense from level %u (levels %u-%u left out: %.0f MiB from level %u, %.0f MiB from level %u, DM_VK_SPARSE_DENSE_MB)",
              (unsigned long long)t->serial, t->d.width, t->d.height, t->L.layers, t->d.format, bd, b, bd - 1, dense_bytes(&t->d, &t->L, b) / 1048576.0, b, dense_bytes(&t->d, &t->L, bd) / 1048576.0, bd); }
@@ -1232,7 +1232,7 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
     vka_fmt f; vka_img *im = NULL; int throttle = 0;
     if (vka_fmt_of(t->d.format, &f)) {
         // (not an image whose pool was finalized: a new pool over the same memory has new content. Shared with a texture of another live pool, the image follows the newest one's)
-        for (int i = 0; i < g_nlive && !im; i++) if (t->mem && same_shape(g_live[i], t, &f, 1) && !img_pool_dead(g_live[i]) && !(g_live[i]->base && sparse_gpu(t, &f))) {   // (drawn into at level 0)
+        for (int i = 0; i < g_nlive && !im; i++) if (t->mem && same_shape(g_live[i], t, &f, 1) && !img_pool_dead(g_live[i]) && !(g_live[i]->base && !g_live[i]->dcap && sparse_gpu(t, &f))) {   // (drawn into at level 0 unless capped)
             im = g_live[i]; im->refs++;
             if (t->pool && im->pool != t->pool) { uint64_t fin = nvn_pool_fin(), g = nvn_pool_live(t->pool, NULL, NULL); if (g) { im->pool = t->pool; im->pfin = fin; im->pgen = g; } } }
         if (im) big_share(im, t);   // (another texture object of the same storage and shape: DM_VK_BIGIMG_MB diagnostic)

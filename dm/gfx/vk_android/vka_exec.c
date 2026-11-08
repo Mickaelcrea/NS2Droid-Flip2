@@ -473,7 +473,7 @@ static void clear_color(const p_clear_color *c) {
     const tex_t *t = S.rt.color[c->index]; const view_t *v = &S.rt.cview[c->index]; int hv = S.rt.has_cview[c->index];
     vka_img *im = vka_tex_get(t, g_cb); vka_fmt f;
     if (!im || !vka_fmt_of(hv && v->set_format ? v->format : t->d.format, &f)) return;
-    if (f.kind) { VRED_ONCE("color clear of a depth texture (format %#x)", t->d.format); return; }
+    if (f.kind >= 3) { VRED_ONCE("color clear of a depth texture (format %#x)", t->d.format); return; }
     if ((c->mask & 0xf) != 0xf) { VRED_ONCE("color clear with channel mask %#x is not on Vulkan yet (needs a pipeline): skipped", c->mask); return; }
     vka_tex_own(im, g_cb);   // (zero-shared: memory of its own before the clear, which may also become the next pass's loadOp)
     uint32_t lv, l0, nl; rt_range(im, v, hv, &lv, &l0, &nl);
@@ -481,7 +481,11 @@ static void clear_color(const p_clear_color *c) {
     VkRect2D rc; int part = scissored(im, lv, &rc);
     if (!rc.extent.width) return;
     vka_fmt fl = f; fl.srgb = 0;   // in a pass the attachment is the sRGB view: the clear colour stays linear there
-    vka_pclear pc = {c->index, im, f.vk, VK_IMAGE_ASPECT_COLOR_BIT, lv, l0, nl, rc, !part, {.color = color_value(&f, c->rgba)}, {.color = color_value(&fl, c->rgba)}};
+    VkClearValue val;
+    if (f.kind == 1) for (int i = 0; i < 4; i++) val.color.uint32[i] = (uint32_t)c->rgba[i];
+    else if (f.kind == 2) for (int i = 0; i < 4; i++) val.color.int32[i] = (int32_t)c->rgba[i];
+    else val.color = color_value(&f, c->rgba);
+    vka_pclear pc = {c->index, im, f.vk, VK_IMAGE_ASPECT_COLOR_BIT, lv, l0, nl, rc, !part, val, val};
     vka_img_written(im); g_stat_ops++;
     if (!clear_in_pass(&pc)) vka_clear_outside(&pc);
 }

@@ -247,7 +247,14 @@ typedef struct vka_img {
     uint32_t nsamp, novl; uint64_t ovl[4];
 } vka_img;
 // Texture level lv as a level of im (a sparse texture's image starts at level im->base): 0 when the image does not hold it
-static inline int vka_img_lv(const vka_img *im, uint32_t *lv) { if (*lv < im->base) return 0; *lv -= im->base; return *lv < im->levels; }
+static inline int vka_img_lv(const vka_img *im, uint32_t *lv) {
+    if (*lv < im->base) {
+        if (im->dcap) { *lv = 0; return *lv < im->levels; }
+        return 0;
+    }
+    *lv -= im->base;
+    return *lv < im->levels;
+}
 // The layers a render target view of level lv can name: a 3D texture's slices at that level (drawn into through 2D / 2D-array views, VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT), else the array layers
 static inline uint32_t vka_img_slices(const vka_img *im, uint32_t lv) { return im->d.target == NVN_TEXTURE_TARGET_3D ? (im->depth >> lv ? im->depth >> lv : 1) : im->layers; }
 vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb);   // the texture's image, made (and filled from guest memory, or cleared) on first use in cb; NULL = no image
