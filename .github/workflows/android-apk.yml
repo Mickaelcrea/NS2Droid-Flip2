@@ -18,6 +18,7 @@ on:
           - debug
   push:
     branches:
+      - main
       - android
       - 'android-*'
     paths:
