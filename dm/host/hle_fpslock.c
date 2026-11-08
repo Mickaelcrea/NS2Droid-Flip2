@@ -221,11 +221,16 @@ static void lock_find(void) {
     }
     fb_find();
 }
-// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, Unreal's variables or Frostbite's simulation rate, found by name).
+// Whether the host writes fps_target into an engine limiter of this main (a row for its build, NieR's frame interval, Unreal's variables or Frostbite's simulation rate, found by name),
+// or the profile/environment uses display pacing (present_interval display).
 // Without one, and without a frame step state page, nothing makes the game follow the cap, so the graphics layer keeps the game's own present interval (hle_nvn.c fps_present_cap):
 // presenting at a cap the game does not step by runs a fixed-step game fast or slow (Tears of the Kingdom 1.4.2 at 2x with DM_FPS_TARGET=60)
+static int display_pacing(void) {
+    const char *m = getenv("DM_PRESENT_INTERVAL");
+    return m ? !strcmp(m, "display") : DM_GAME_PRESENT_DISPLAY;
+}
 static int floor_only(void) { for (int r = 0; r < nrow; r++) if (rows[r]->kind != MIN_VSYNCS_I32) return 0; return nrow > 0 && !nier && !fb.n; }
-int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (nrow || nier || fb.n) && !floor_only(); }
+int dm_fps_lock_engine(void) { pthread_once(&g_found, lock_find); return (((nrow || nier || fb.n) && !floor_only()) || display_pacing()); }
 int dm_fps_lock_floor(void) { pthread_once(&g_found, lock_find); for (int r = 0; r < nrow; r++) if (rows[r]->kind == MIN_VSYNCS_I32) return 1; return 0; }   // the game picks its interval at or above a floor the host writes
 // The cap: DM_FPS_TARGET or the profile's fps_target at start, then whatever the front end sets while the game runs (dm_fps_target_set: the Android launcher's in-game panel,
 // DM_CTL "fps <n>"). 0 = the game's own; else 15, 20, 30, 40, 45 or 60, each applied by the limiters that can hold it (rate_ok)
@@ -273,7 +278,7 @@ static int row_holds(const lock_t *L, int t) {
     return !mx || 60 / t <= mx;
 }
 static int holds(int t) {
-    int ok = (nier && 60 % t == 0) || fb.n;
+    int ok = ((nier || display_pacing()) && 60 % t == 0) || fb.n;
     for (int r = 0; r < nrow && !ok; r++) ok = row_holds(rows[r], t);
     return ok;
 }
@@ -292,10 +297,10 @@ void dm_fps_lock_tick(void) {
     if (state == -1) return;
     if (state == -2) {
         pthread_once(&g_found, lock_find);
-        if (!nrow && !nier && !fb.n && !ue_missing) { state = -1; return; }
+        if (!nrow && !nier && !fb.n && !ue_missing && !display_pacing()) { state = -1; return; }
         int t = dm_fps_target();
         if (t && ue_missing) LOG("[RED] main: Unreal %s not found by the rewriter (ue_cvar.py NAMES; game profile ue_fps_cvar): the game's own frame limit stays", DM_GAME_UE_FPS_CVAR);
-        if (!nrow && !nier && !fb.n) { state = -1; return; }
+        if (!nrow && !nier && !fb.n && !display_pacing()) { state = -1; return; }
         state = 0;
     }
     int g = dm_fps_target_gen();

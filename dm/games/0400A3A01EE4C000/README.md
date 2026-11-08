@@ -10,6 +10,9 @@ A Switch 2 game: update v655360 (the title screen says Ver. 2.0.1), SDK 20.5.25 
 | `mem_used 0x5600000` | `game.tsv` | the rewritten modules take 82 MB, more than the default 64 MB that `SetHeapSize` checks the game's request against |
 | `pad_layout full` | `game.tsv` | |
 | `res_levels 76a489f3… 0x2849658 34 …` | `game.tsv` | the dynamic resolution's size table and its nine level lists in update v655360's main: the host lowers the lists to fit `DM_WINDOW_SIZE` (the Android launcher's Game resolution) at load ([Render size](#render-size)) |
+| `android_window 1280x720` | `game.tsv` | default resolution for Adreno 650; level 10 of the game's 34 |
+| `present_interval display` | `game.tsv` | 30 or 60 fps pacing: presentation follows the host's present cap, as the engine measures elapsed time |
+| `draw_barriers game` | `game.tsv` | draw passes ordered by the game's own barriers, halving pipeline stalls across the 112 barriers and 50 passes |
 
 ## Files
 

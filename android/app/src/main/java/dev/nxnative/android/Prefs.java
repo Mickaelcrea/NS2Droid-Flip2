@@ -48,8 +48,8 @@ final class Prefs {
     static void rumbleDefault(Context c, boolean on) { of(c).edit().putBoolean("rumble", on).commit(); }
     static boolean rumble(Context c, String titleId) { return of(c).getBoolean(gameKey("rumble", titleId), rumble(c)); }
     static void rumble(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("rumble", titleId), on).commit(); }
-    /** Use fast cores (Native.pinThreads): the main screen's default (off: not measured yet, and it may work against the ADPF hint session of vka_perf.c), then each game's own */
-    static boolean pinThreads(Context c) { return of(c).getBoolean("pin_threads", false); }
+    /** Use fast cores (Native.pinThreads): on by default for optimal performance on big.LITTLE architectures, then each game's own */
+    static boolean pinThreads(Context c) { return of(c).getBoolean("pin_threads", true); }
     static void pinThreadsDefault(Context c, boolean on) { of(c).edit().putBoolean("pin_threads", on).commit(); }
     static boolean pinThreads(Context c, String titleId) { return of(c).getBoolean(gameKey("pin_threads", titleId), pinThreads(c)); }
     static void pinThreads(Context c, String titleId, boolean on) { of(c).edit().putBoolean(gameKey("pin_threads", titleId), on).commit(); }
