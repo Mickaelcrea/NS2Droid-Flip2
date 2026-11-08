@@ -56,13 +56,13 @@ final class Prefs {
     static void gameWindow(Context c, String titleId, String v) { put(c, gameKey("window", titleId), v); }
     static boolean ownWindow(Context c, String titleId) { return of(c).contains(gameKey("window", titleId)); }
 
-    /** Whether this phone has <= 8.5 GB RAM (typical 8GB devices report ~7.2 to 7.8 GB totalMem) */
+    /** Whether this phone has <= 8GB physical RAM (threshold 10.5 GiB covers 8GB devices with RAM Plus / Memory Extension enabled) */
     static boolean isLowRamDevice(Context c) {
         android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
         if (am == null) return false;
         android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
         am.getMemoryInfo(mi);
-        return mi.totalMem <= 8500000000L;
+        return mi.totalMem <= 11274289152L; // 10.5 GiB
     }
 
     /** Low RAM mode (optimized for <= 8GB RAM devices like Snapdragon 870): aggressive trim, 16MB slabs, prefault off, 720p default */

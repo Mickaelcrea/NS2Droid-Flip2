@@ -727,7 +727,17 @@ static pthread_mutex_t g_pmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t 
 static _Atomic int g_nlazy; static uint64_t g_lazy_bytes, g_pool_id;   // pools not (wholly) placed yet and their bytes not placed (g_lazy_bytes, g_pool_id under g_pmu)
 static _Atomic uint64_t g_lzgen = 1;   // bumped when a pool not placed yet comes (mtl_pool_add): mtl_pool_need's per-thread record of ranges with nothing left to place holds while it stands
 static int lazy_on(void) { static int v = -1; if (v < 0) { v = VKA_ENV("DM_VK_PLACE_LAZY", 1) != 0; if (!v) VLOG("DM_VK_PLACE_LAZY=0: every memory pool is placed when it is made"); } return v; }
-static uint64_t part_min(void) { static int64_t v = -1; if (v < 0) { v = (int64_t)VKA_ENV("DM_VK_PLACE_PART_MB", 1024) << 20; if (v < 0) v = 0; if (!v) VLOG("DM_VK_PLACE_PART_MB=0: every memory pool is placed whole"); } return (uint64_t)v; }
+static uint64_t part_min(void) {
+    static int64_t v = -1;
+    if (v < 0) {
+        const char *low = getenv("DM_LOW_MEM");
+        int64_t def = (low && strcmp(low, "0") != 0) ? 16 : 1024;
+        v = (int64_t)VKA_ENV("DM_VK_PLACE_PART_MB", def) << 20;
+        if (v < 0) v = 0;
+        if (!v) VLOG("DM_VK_PLACE_PART_MB=0: every memory pool is placed whole");
+    }
+    return (uint64_t)v;
+}
 static uint64_t part_gran(void) {
     static int64_t v = -1;
     if (v < 0) { int64_t m = VKA_ENV("DM_VK_PLACE_GRANULE_MB", 16); if (m < 1) m = 1; v = m << 20; uintptr_t al = pg_align(); v = (v + (int64_t)al - 1) & ~(int64_t)(al - 1); }

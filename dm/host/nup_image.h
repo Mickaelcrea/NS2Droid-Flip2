@@ -186,8 +186,18 @@ static romfs_img *nup_image_open(const char *spec, char *why, size_t wn) {
     pthread_mutex_init(&aux->lock, NULL); pthread_cond_init(&aux->cv, NULL);
     if (nz && !(aux->z = calloc((size_t)nz, sizeof *aux->z))) { e = ENOMEM; NUP_BAD("out of memory"); }
     m->n = n; m->names = (const char *)m->e + n * sizeof(img_ent); aux->nz = nz;
-    { const char *mb = getenv("DM_NUP_CACHE_MB"); aux->budget = (uint64_t)(mb && *mb ? atoll(mb) : 128) << 20; }
-    { const char *mb = getenv("DM_NUP_DISK_MB"); aux->disk_min = (uint64_t)((mb && *mb ? strtod(mb, NULL) : 64) * 1048576.0); }   // (a fraction of a MiB: the unit test)
+    {
+        const char *low = getenv("DM_LOW_MEM");
+        int def_c = (low && strcmp(low, "0") != 0) ? 32 : 128;
+        const char *mb = getenv("DM_NUP_CACHE_MB");
+        aux->budget = (uint64_t)(mb && *mb ? atoll(mb) : def_c) << 20;
+    }
+    {
+        const char *low = getenv("DM_LOW_MEM");
+        double def_d = (low && strcmp(low, "0") != 0) ? 16.0 : 64.0;
+        const char *mb = getenv("DM_NUP_DISK_MB");
+        aux->disk_min = (uint64_t)((mb && *mb ? strtod(mb, NULL) : def_d) * 1048576.0);
+    }
     { const char *b = strrchr(file, '/'); snprintf(aux->what, sizeof aux->what, "%s package %s", b ? b + 1 : file, sel[0] ? sel : "(newest)"); }
     m->aux = aux; m->aux_free = nup_aux_free;
     { char *np = (char *)m->names; uint64_t at = 0, k = 1, zi = 0, qh = 0, qt = 0;

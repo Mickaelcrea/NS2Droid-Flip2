@@ -543,7 +543,9 @@ VkCommandBuffer vka_up_cur(VkCommandBuffer cb) {   // the open batch when cb was
 VkCommandBuffer vka_up_point(VkCommandBuffer cb) {
     if (g_ui < 0 || cb != g_ub[g_ui].cb) return cb;
     pthread_mutex_lock(&g_smu); VkDeviceSize n = g_ubytes; pthread_mutex_unlock(&g_smu);
-    double mb = VKA_ENVF("DM_VK_UPLOAD_BATCH_MB", 64.0);
+    const char *low = getenv("DM_LOW_MEM");
+    double def_b = (low && strcmp(low, "0") != 0) ? 16.0 : 64.0;
+    double mb = VKA_ENVF("DM_VK_UPLOAD_BATCH_MB", def_b);
     if ((double)n < mb * 1048576.0) return cb;
     vka_up_flush();
     VkCommandBuffer nb = vka_up_begin(); return nb ? nb : up_fallback();
@@ -576,7 +578,9 @@ void vka_up_flush(void) {
 // replay thread holds no lock (vka_tex_get after the table lock, chunk, the commit): the present and other threads that take the image table do not wait for the GPU
 void vka_up_throttle(void) {
     if (!g_utl) return;
-    double cap = VKA_ENVF("DM_VK_UPLOAD_INFLIGHT_MB", 256.0) * 1048576.0;
+    const char *low = getenv("DM_LOW_MEM");
+    double def_i = (low && strcmp(low, "0") != 0) ? 64.0 : 256.0;
+    double cap = VKA_ENVF("DM_VK_UPLOAD_INFLIGHT_MB", def_i) * 1048576.0;
     for (;;) {
         uint64_t udone = up_done(), oldest = UINT64_MAX; VkDeviceSize fl = 0;
         pthread_mutex_lock(&g_smu);
