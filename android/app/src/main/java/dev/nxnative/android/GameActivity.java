@@ -448,9 +448,6 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
                 env.add("DM_VK_ZSHARE_MB=1");
                 env.add("DM_NUP_DISK_MB=16");
                 env.add("DM_NUP_CACHE_MB=32");
-                if ("040074A01BF12000".equals(id)) {
-                    env.add("DM_APP_POOL=0x140000000"); // 5.0 GiB cap for Switch 2 DKB on <=8GB phones
-                }
             }
             env.addAll(user);
             for (String kv : env) if (kv.startsWith("DM_OVERLAY=")) overlayEnv = !kv.substring(11).trim().equals("0");
