@@ -210,6 +210,7 @@ VkResult vka_imem_bind_zero(VkImage img, uint32_t type, const VkMemoryRequiremen
 uint64_t vka_imem_zbytes(void); uint64_t vka_imem_zbytes_nolock(void);   // bytes of the zero-shared allocations
 void vka_imem_zowned(void);   // a zero-shared image got memory of its own (vka_tex.c img_own): counted for the stats line
 void vka_imem_free(vka_imem *m);   // after vkDestroyImage, once the GPU is done with the image
+void vka_imem_trim(void);          // free all empty image memory blocks (e.g. on memory pressure)
 void vka_imem_stats(char *b, size_t n);
 uint64_t vka_imem_allocations(void);   // VkDeviceMemory objects the images hold (blocks + dedicated)
 typedef struct vka_img {
@@ -252,7 +253,14 @@ typedef struct vka_img {
     uint32_t nsamp, novl; uint64_t ovl[4];
 } vka_img;
 // Texture level lv as a level of im (a sparse texture's image starts at level im->base): 0 when the image does not hold it
-static inline int vka_img_lv(const vka_img *im, uint32_t *lv) { if (*lv < im->base) return 0; *lv -= im->base; return *lv < im->levels; }
+static inline int vka_img_lv(const vka_img *im, uint32_t *lv) {
+    if (*lv < im->base) {
+        if (im->dcap) { *lv = 0; return *lv < im->levels; }
+        return 0;
+    }
+    *lv -= im->base;
+    return *lv < im->levels;
+}
 // The layers a render target view of level lv can name: a 3D texture's slices at that level (drawn into through 2D / 2D-array views, VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT), else the array layers
 static inline uint32_t vka_img_slices(const vka_img *im, uint32_t lv) { return im->d.target == NVN_TEXTURE_TARGET_3D ? (im->depth >> lv ? im->depth >> lv : 1) : im->layers; }
 vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb);   // the texture's image, made (and filled from guest memory, or cleared) on first use in cb; NULL = no image

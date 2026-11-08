@@ -53,3 +53,4 @@ render_cond	on
 # Original has no row: the game's own (console, scale 1: 2048x1152)
 graphics_scale	1920x1080	0	handheld
 graphics_scale	1280x720	2	handheld
+android_window	1280x720

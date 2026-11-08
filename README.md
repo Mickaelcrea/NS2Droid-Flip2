@@ -1,12 +1,12 @@
-# Banana Native
+# NS2Droid
 
 > [!NOTE]
-> The page GitHub shows for this repository is [.github/README.md](.github/README.md): what Banana Native is, the games,
+> The page GitHub shows for this repository is [.github/README.md](.github/README.md): what NS2Droid is, the games,
 > and how to set it up. This file is the short version for anyone who opens the repository's root.
 
-Banana Native runs Switch 2 games from your own dumps on Android phones, in the spirit of Wine: the game's own code runs
-directly on the phone's CPU, Banana Native implements the system services it calls, and the game's graphics are
-translated to Vulkan. It is the Android port of [nxnative](https://github.com/seedds/nxnative) by seedds. It needs only a
+NS2Droid runs Switch 2 games from your own dumps on Android phones, in the spirit of Wine: the game's own code runs
+directly on the phone's CPU, NS2Droid implements the system services it calls, and the game's graphics are
+translated to Vulkan. It is based on Banana Native / [nxnative](https://github.com/seedds/nxnative) by seedds. It needs only a
 dump of a game you own, made from your own console, and no keys; nothing from any game is in this repository or in the
 app, and the project is not affiliated with or endorsed by Nintendo, any game publisher, nxnative or Eden.
 

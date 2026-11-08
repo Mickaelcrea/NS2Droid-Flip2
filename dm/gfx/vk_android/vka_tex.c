@@ -420,7 +420,7 @@ static int sparse_sampled(const tex_t *t, const vka_fmt *f) {   // a sparse pool
 static int sparse_gpu(const tex_t *t, const vka_fmt *f) {
     const nvn_texdesc *d = &t->d;
     return t->mem && t->pool && (d->flags & NVN_TEXTURE_FLAGS_SPARSE) && (d->flags & (NVN_TEXTURE_FLAGS_COMPRESSIBLE | NVN_TEXTURE_FLAGS_IMAGE)) && pool_sparse(t->pool) && d->samples <= 1
-        && f->kind < 3 && (d->target == NVN_TEXTURE_TARGET_2D || d->target == NVN_TEXTURE_TARGET_2D_ARRAY) && !(d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET));
+        && f->kind <= 4 && (d->target == NVN_TEXTURE_TARGET_2D || d->target == NVN_TEXTURE_TARGET_2D_ARRAY) && !(d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET));
 }
 static int sparse_levels_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_VK_SPARSE_LEVELS"); on = !e || atoi(e) != 0; } return on; }
 static void sub_range(const nvn_texdesc *d, const nvn_texlayout *L, uint32_t lv, uint32_t ly, uint64_t *off, uint64_t *len) {   // level lv of layer ly in the storage
@@ -464,7 +464,9 @@ static uint64_t dense_bytes(const nvn_texdesc *d, const nvn_texlayout *L, uint32
     uint64_t lo = nvn_tex_level_offset(d, b); return (L->layer_size > lo ? L->layer_size - lo : 0) * (L->layers ? L->layers : 1);
 }
 static uint32_t dense_floor(const nvn_texdesc *d, const nvn_texlayout *L, uint32_t b) {
-    double cap = VKA_ENVF("DM_VK_SPARSE_DENSE_MB", 128.0) * 1048576.0; uint32_t n = d->levels ? d->levels : 1;
+    const char *low = getenv("DM_LOW_MEM");
+    double def_cap = (low && strcmp(low, "0") != 0) ? 32.0 : 128.0;
+    double cap = VKA_ENVF("DM_VK_SPARSE_DENSE_MB", def_cap) * 1048576.0; uint32_t n = d->levels ? d->levels : 1;
     if (cap <= 0 || d->target == NVN_TEXTURE_TARGET_3D || !sparse_levels_on()) return b;
     while (b + 1 < n && (double)dense_bytes(d, L, b) > cap) b++;
     return b;
@@ -482,9 +484,9 @@ static vka_img *img_create(const tex_t *t, const vka_fmt *f, uint32_t base) {
                      im->layers, t->d.format, base, b - 1, st); } }
             return im;
         }
-        if (why != 1 || !sparse_sampled(t, f)) { b = base; break; }   // refused for another reason (3: the format has no sparse residency at this shape), or a GPU-written one (drawn into at level 0: no coarser start): dense from base
+        if (why != 1 || !sparse_sampled(t, f)) { b = base; break; }   // refused for another reason (3: the format has no sparse residency at this shape), or a GPU-written one: dense from base, capped if needed
     }
-    uint32_t bd = sparse_sampled(t, f) ? dense_floor(&t->d, &t->L, b) : b;   // (at most DM_VK_SPARSE_DENSE_MB from there)
+    uint32_t bd = (sparse_sampled(t, f) || sparse_gpu(t, f)) ? dense_floor(&t->d, &t->L, b) : b;   // (at most DM_VK_SPARSE_DENSE_MB from there)
     if (bd > b) { static _Atomic int n; if (atomic_fetch_add(&n, 1) < 16)
         VRED("sparse texture serial %llu %ux%u layers %u format %#x: no residency image; dense from level %u (levels %u-%u left out: %.0f MiB from level %u, %.0f MiB from level %u, DM_VK_SPARSE_DENSE_MB)",
              (unsigned long long)t->serial, t->d.width, t->d.height, t->L.layers, t->d.format, bd, b, bd - 1, dense_bytes(&t->d, &t->L, b) / 1048576.0, b, dense_bytes(&t->d, &t->L, bd) / 1048576.0, bd); }
@@ -569,7 +571,9 @@ static vka_img *img_create_(const tex_t *t, const vka_fmt *f, uint32_t base, int
     // A 3D texture is drawn into slice by slice (NVN render target views of its slices, or all of them layered): 2D / 2D-array views of slices need this (Vulkan 1.1 maintenance1)
     if (is3d && (u & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) fl |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
     // Zero-shared images (below): a large GPU-content image the caller makes (g_zwant: vka_tex_get, its content ST_ZERO) is made to alias the zeroed memory of its create info
-    int zs = g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", 4.0) * 1048576.0), res, im->samples, is3d, compressed(f),
+    const char *low = getenv("DM_LOW_MEM");
+    double def_zs = (low && strcmp(low, "0") != 0) ? 1.0 : 4.0;
+    int zs = g_zwant && VKA_ENV("DM_VK_ZSHARE", 1) && vkz_candidate(t->L.size, (uint64_t)(VKA_ENVF("DM_VK_ZSHARE_MB", def_zs) * 1048576.0), res, im->samples, is3d, compressed(f),
                                                                     (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_DISPLAY)) != 0);
     if (zs) fl |= VK_IMAGE_CREATE_ALIAS_BIT;
     VkImageType it = is3d ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
@@ -1437,7 +1441,7 @@ vka_img *vka_tex_get(const tex_t *t, VkCommandBuffer cb) {
     }
     vka_fmt f; vka_img *im = NULL; int throttle = 0;
     if (vka_fmt_of(t->d.format, &f)) {
-        for (int i = 0; i < g_nlive && !im; i++) if (t->mem && same_shape(g_live[i], t, &f, 1) && !(g_live[i]->base && sparse_gpu(t, &f))) {
+        for (int i = 0; i < g_nlive && !im; i++) if (t->mem && same_shape(g_live[i], t, &f, 1) && !(g_live[i]->base && !g_live[i]->dcap && sparse_gpu(t, &f))) {
             im = g_live[i]; im->refs++;
             if (im->pdead) {
                 im->pdead = 0; im->track = 1;

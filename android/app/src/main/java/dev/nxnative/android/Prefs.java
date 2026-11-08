@@ -87,10 +87,33 @@ final class Prefs {
     static int panelText(Context c) { return PanelLook.of(of(c).getInt("panel_text", PanelLook.NORMAL)); }
     static void panelText(Context c, int v) { of(c).edit().putInt("panel_text", PanelLook.of(v)).commit(); }
 
+    /** Whether this phone has <= 8GB physical RAM (threshold 10.5 GiB covers 8GB devices with RAM Plus / Memory Extension enabled) */
+    static boolean isLowRamDevice(Context c) {
+        android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am == null) return false;
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        return mi.totalMem <= 11274289152L; // 10.5 GiB
+    }
+
+    /** Low RAM mode (optimized for <= 8GB RAM devices like Snapdragon 870): aggressive trim, 16MB slabs, prefault off, 720p default */
+    static boolean lowRam(Context c) { return of(c).getBoolean("low_ram", isLowRamDevice(c)); }
+    static void lowRam(Context c, boolean on) { of(c).edit().putBoolean("low_ram", on).commit(); }
+
+    static boolean gameLowRam(Context c, String titleId) {
+        return of(c).getBoolean(gameKey("low_ram", titleId), lowRam(c));
+    }
+    static void gameLowRam(Context c, String titleId, Boolean v) {
+        if (v == null) of(c).edit().remove(gameKey("low_ram", titleId)).commit();
+        else of(c).edit().putBoolean(gameKey("low_ram", titleId), v).commit();
+    }
+    static boolean ownLowRam(Context c, String titleId) { return of(c).contains(gameKey("low_ram", titleId)); }
+
     /** The game's window size: its own choice, else the default (defaultWindow) */
     static String gameWindow(Context c, String titleId) { return of(c).getString(gameKey("window", titleId), defaultWindow(c, titleId)); }
-    /** A game's default window size: the main screen's when the player chose one there, else its profile's android_window (a workaround for one game, game.tsv), else Phone 1080p */
+    /** A game's default window size: 720p in Low RAM mode, else the main screen's when the player chose one there, else its profile's android_window (a workaround for one game, game.tsv), else Phone 1080p */
     static String defaultWindow(Context c, String titleId) {
+        if (gameLowRam(c, titleId)) return "1280x720";
         if (of(c).contains("window")) return window(c);
         Profile p = Profile.of(titleId);
         return p != null && java.util.Arrays.asList(WINDOWS).contains(p.window) ? p.window : WINDOW_DEFAULT;

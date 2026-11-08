@@ -1,10 +1,10 @@
-<p align="center"><img src="../android/images/logo.svg" alt="Banana Native logo" width="128"></p>
+<p align="center"><img src="../android/images/logo.svg" alt="NS2Droid logo" width="128"></p>
 
-# Banana Native
+# NS2Droid
 
-Banana Native runs Switch 2 games from your own dumps on Android phones. Like Wine, it emulates no hardware: the
-game's own ARM64 code runs on the phone's CPU, Banana Native supplies the system services it calls and translates its
-graphics to Vulkan. It is an Android port of [nxnative](https://github.com/seedds/nxnative) by seedds.
+NS2Droid runs Switch 2 games from your own dumps on Android phones. Like Wine, it emulates no hardware: the
+game's own ARM64 code runs on the phone's CPU, NS2Droid supplies the system services it calls and translates its
+graphics to Vulkan. It is an Android compatibility layer based on Banana Native / [nxnative](https://github.com/seedds/nxnative) by seedds.
 
 > [!NOTE]
 > Unofficial and experimental. Not affiliated with Nintendo, nxnative or Eden. The project contains no Nintendo code,

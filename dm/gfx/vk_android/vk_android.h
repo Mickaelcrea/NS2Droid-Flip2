@@ -33,3 +33,5 @@ __attribute__((visibility("default"))) int nxhost_overlay_state(void);
 // (DM_VK_DRIVER, read at the first call in the process: set it before). Its own instance, no device; callable before nxhost_main. 0 = facts written, 1 = an "error=" line
 // says why the facts stop there, -1 = no buffer
 __attribute__((visibility("default"))) int nxhost_vk_readiness(char *buf, int n);
+// Trims caches and returns unused memory to the OS (e.g. on Android onTrimMemory / onLowMemory).
+__attribute__((visibility("default"))) void nxhost_trim_memory(int level);

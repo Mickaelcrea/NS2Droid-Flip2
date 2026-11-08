@@ -17,7 +17,20 @@
 #include <stdlib.h>
 
 #define UNIT 256ull
-#define BLOCK (64ull << 20)
+static uint64_t imem_block_size(void) {
+    static uint64_t sz = 0;
+    if (!sz) {
+        int64_t mb = VKA_ENV("DM_VK_IMGMEM_BLOCK_MB", 0);
+        if (mb <= 0) {
+            const char *low = getenv("DM_LOW_MEM");
+            mb = (low && strcmp(low, "0") != 0) ? 16 : 64;
+        }
+        if (mb < 4) mb = 4;
+        sz = (uint64_t)mb << 20;
+    }
+    return sz;
+}
+#define BLOCK imem_block_size()
 #define VKA_IMEM_MAX (4ull << 20)            // images of at least 4 MiB keep their own allocation
 typedef struct iblock { struct iblock *next; VkDeviceMemory dm; uint32_t type; vke_list free; } iblock;
 static iblock *g_blocks[VK_MAX_MEMORY_TYPES];
@@ -149,6 +162,27 @@ void vka_imem_free(vka_imem *m) {
     pthread_mutex_unlock(&g_imu);
     if (gone) { vk.vkFreeMemory(V.dev, gone->dm, NULL); vke_fini(&gone->free); free(gone); }
     memset(m, 0, sizeof *m);
+}
+
+void vka_imem_trim(void) {
+    pthread_mutex_lock(&g_imu);
+    for (int t = 0; t < VK_MAX_MEMORY_TYPES; t++) {
+        for (iblock **p = &g_blocks[t]; *p;) {
+            iblock *b = *p;
+            if (vke_empty(&b->free)) {
+                *p = b->next;
+                S.blocks--; S.freed++;
+                pthread_mutex_unlock(&g_imu);
+                vk.vkFreeMemory(V.dev, b->dm, NULL);
+                vke_fini(&b->free);
+                free(b);
+                pthread_mutex_lock(&g_imu);
+            } else {
+                p = &(*p)->next;
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_imu);
 }
 
 // For the stats line: the blocks, the bytes the images in them take, what rounding to units and the blocks' free space leave unused, the dedicated allocations

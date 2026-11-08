@@ -24,14 +24,12 @@ if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different
 def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
 def nxVersion = providers.gradleProperty('nxVersion').getOrElse('0.1-bringup')
-def nxVersionCode = providers.gradleProperty('nxVersionCode').getOrElse('1') as int
-def signStore = System.getenv('NX_SIGN_STORE'), signAlias = System.getenv('NX_SIGN_ALIAS'), signPass = System.getenv('NX_SIGN_PASS')
-if (nxLive && !(signStore && signAlias && signPass && new File(signStore).isFile()))
-    throw new GradleException('nxLive needs the release key: NX_SIGN_STORE (an existing keystore), NX_SIGN_ALIAS and NX_SIGN_PASS')
-def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "Banana Native $nxApp" : '')
+def nxLabel = providers.gradleProperty('nxLabel').getOrElse(nxApp ? "NS2Droid $nxApp" : '')
 // The build tag the launcher shows over the game and in its main screen, and writes as the first line of each game log: branch@commit[+dirty] (no build time: the commit and the signer identify a build)
 def gitOut = { List<String> a -> try { providers.exec { commandLine(['git'] + a); ignoreExitValue = true }.standardOutput.asText.get().trim() } catch (Exception e) { '' } }
 def commit = gitOut(['rev-parse', '--short=12', 'HEAD'])
+def gitCommitCount = { try { (gitOut(['rev-list', '--count', 'HEAD']) as int) } catch (Exception e) { 1 } }
+def nxVersionCode = (providers.gradleProperty('nxVersionCode').getOrElse('') ?: gitCommitCount()) as int
 def branch = gitOut(['rev-parse', '--abbrev-ref', 'HEAD'])
 def dirty = gitOut(['status', '--porcelain', '--untracked-files=no']) ? '+dirty' : ''
 // Lossless Scaling frame generation (GPL-3.0-or-later, dm/gfx/vk_android/lsfg): in by default, which makes the APK GPL-3.0-or-later; -PnxLsfg=false builds without it (the packer's libdmsh_xlate.so is GPL-3.0-or-later too: android/NOTICE.md)
@@ -104,8 +102,8 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId nxLive ? 'dev.bananative.android' : nxPlay ? 'dev.nxnative.android.play' : nxApp ? "dev.nxnative.android.$nxApp" : 'dev.nxnative.android'
-        resValue 'string', 'app_name', nxPlay || nxLive ? 'Banana Native' : nxApp ? nxLabel : 'Banana Native test'
+        applicationId nxLive ? 'dev.ns2droid.android' : nxPlay ? 'dev.ns2droid.android.play' : nxApp ? "dev.ns2droid.android.$nxApp" : 'dev.ns2droid.android'
+        resValue 'string', 'app_name', nxPlay || nxLive ? 'NS2Droid' : nxApp ? nxLabel : 'NS2Droid'
         minSdk 33
         targetSdk 35
         versionCode nxVersionCode
@@ -156,13 +154,22 @@ android {
     }
     signingConfigs {
         if (nxLive) live { storeFile file(signStore); storePassword signPass; keyAlias signAlias; keyPassword signPass }
+        ci {
+            storeFile file('ci-signing.keystore')
+            storePassword 'android'
+            keyAlias 'ns2native'
+            keyPassword 'android'
+        }
     }
     buildTypes {
-        debug { jniDebuggable true }
+        debug {
+            jniDebuggable true
+            signingConfig(file('ci-signing.keystore').exists() ? signingConfigs.ci : signingConfigs.debug)
+        }
         release {
             minifyEnabled false
             debuggable !nxLive       // bring-up builds: run-as and the app's files stay reachable over adb; the release is not debuggable
-            signingConfig nxLive ? signingConfigs.live : signingConfigs.debug
+            signingConfig nxLive ? signingConfigs.live : (file('ci-signing.keystore').exists() ? signingConfigs.ci : signingConfigs.debug)
         }
     }
     externalNativeBuild {
@@ -178,12 +185,12 @@ android {
     lint { abortOnError false; checkReleaseBuilds false }
 }
 
-// ./gradlew apk → out/nxnative-android.apk (-PnxPlay=true: nxnative-android-play.apk; -PnxApp=<suffix>: nxnative-android-<suffix>.apk)
+// ./gradlew apk → out/ns2droid-android.apk (-PnxPlay=true: ns2droid-android-play.apk; -PnxApp=<suffix>: ns2droid-android-<suffix>.apk)
 tasks.register('apk', Copy) {
     dependsOn 'assembleRelease'
     from(layout.buildDirectory.dir('outputs/apk/release')) { include '*.apk' }
     into layout.projectDirectory.dir('out')
-    rename { nxLive ? "banana-native-${nxVersion}.apk" : nxPlay ? 'nxnative-android-play.apk' : nxApp ? "nxnative-android-${nxApp}.apk" : 'nxnative-android.apk' }
+    rename { nxLive ? "ns2droid-${nxVersion}.apk" : nxPlay ? 'ns2droid-android-play.apk' : nxApp ? "ns2droid-android-${nxApp}.apk" : 'ns2droid-android.apk' }
 }
 
 // The on-device packer's native side (android/ONDEVICE.md "In the APK"; not with -PnxPackEngine=fake). android/ondevice/build.sh makes its stage on the Mac;

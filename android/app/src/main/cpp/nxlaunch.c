@@ -55,6 +55,7 @@ int nxhost_main(int argc, char **argv);
 #pragma weak nxhost_picture_place
 #pragma weak nxhost_fps_cap_set
 #pragma weak nxhost_fps_cap_status
+#pragma weak nxhost_trim_memory
 #pragma weak nxhost_input_device_player
 #pragma weak nxhost_rumble_callback
 #pragma weak nxhost_rumble_route
@@ -310,6 +311,10 @@ JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_touchControlsState(JNIEn
 JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_motionStart(JNIEnv *env, jclass cls) { (void)env; (void)cls; return nxhost_motion_start ? nxhost_motion_start() : JNI_FALSE; }
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_motionStop(JNIEnv *env, jclass cls) { (void)env; (void)cls; if (nxhost_motion_stop) nxhost_motion_stop(); }
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_motionRotation(JNIEnv *env, jclass cls, jint r) { (void)env; (void)cls; if (nxhost_motion_rotation) nxhost_motion_rotation(r); }
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_trimMemory(JNIEnv *env, jclass cls, jint level) {
+    (void)env; (void)cls;
+    if (nxhost_trim_memory) nxhost_trim_memory(level);
+}
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_lifecycle(JNIEnv *env, jclass cls, jint ev) { (void)env; (void)cls; if (nxhost_lifecycle) nxhost_lifecycle(ev); }
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_paused(JNIEnv *env, jclass cls) { (void)env; (void)cls; return nxhost_paused ? nxhost_paused() : -1; }
 JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_audioInterrupt(JNIEnv *env, jclass cls, jboolean on) { (void)env; (void)cls; if (nxhost_audio_interrupt) nxhost_audio_interrupt(on); }
