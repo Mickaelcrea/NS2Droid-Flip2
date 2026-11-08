@@ -32,4 +32,4 @@ anywhere else may be modified or malicious. Nobody connected to the project will
 account details. To reach the developer, use [issues](https://github.com/moceure/BananaNative/issues) or
 [Discussions](https://github.com/moceure/BananaNative/discussions).
 
-Licence and credits: [README](../../README.md#licence-and-credits).
+Licence and credits: [NOTICE](../../android/NOTICE.md).

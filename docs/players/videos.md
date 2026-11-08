@@ -6,7 +6,7 @@ Videos are welcome. To make yours useful to viewers:
 
 - Say the app version (for example v0.2.0), the phone, its chip and RAM, and the GPU driver.
 - Turn on the performance overlay so the frame rate is visible, and say whether frame generation is on.
-- Mention the [known problems](../../.github/README.md#games) of the game you show, so viewers know which ones are
+- Mention the [known problems](../../dm/games/README.md#games) of the game you show, so viewers know which ones are
   already known.
 - Link the project's [GitHub page](https://github.com/moceure/BananaNative) for downloads: releases are only published
   there, and copies elsewhere may be modified.
