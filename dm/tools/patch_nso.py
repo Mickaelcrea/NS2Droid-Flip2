@@ -636,6 +636,9 @@ for o in (o for s, e in CODE_RANGES for o in range(s, e, 4)):
     if w & 0xFFFFFFE0 == 0xD53B0020: kinds[o] = ('ctr', w & 31); continue
     # sub sp, sp, xN (extended register, LSL #0): sp may end up misaligned, which Horizon allows and Apple's kernel does not (site_sp_align); with x18 it is an x18 site (site_sp)
     if w & 0xFFE0FFFF == 0xCB2063FF and (w >> 16) & 31 != 18: kinds[o] = ('sp_align', (w >> 16) & 31); continue
+    # pacga Rd, Rn, Rm (generic pointer authentication, ARMv8.3-A): not supported on ARMv8.0-ARMv8.2 (Cortex-A77/A76, Snapdragon 870/865, etc. trigger SIGILL).
+    # Used in SDK 21 (Switch 2) setjmp/longjmp and fiber context hash verification. Rewritten in place to eor Rd, Rn, Rm, which preserves deterministic hashing without SIGILL.
+    if (w & 0xFFE0FC00) == 0x9AC03000: kinds[o] = ('pacga', None); continue
     if o in x18: kinds[o] = ('x18', None)
 
 # Take the instruction table per function, find the windows and jump tables
@@ -1263,6 +1266,11 @@ for a in sorted(kinds):
     elif k == 'ctr':   # replaced in place by a constant: DminLine = 4 (64-byte lines); movz xN, #4, lsl #16
         assert arg != 18, f'{a:x} mrs x18, ctr_el0'
         struct.pack_into('<I', IMG, a, 0xD2A00080 | arg); stat(k); continue
+    elif k == 'pacga':
+        w = struct.unpack_from('<I', IMG, a)[0]
+        rd, rn, rm = w & 31, (w >> 5) & 31, (w >> 16) & 31
+        assert 18 not in (rd, rn, rm), f'{a:x} pacga uses x18'
+        struct.pack_into('<I', IMG, a, 0xCA000000 | (rm << 16) | (rn << 5) | rd); stat(k); continue
     put_branch(a, st)
 
 obs = list(PATCHES['OBS'].get(BUILD_ID, []))

@@ -47,6 +47,7 @@ def patch_pack(pack_dir):
 
         ret_count = 0
         pac_count = 0
+        pacga_count = 0
 
         # Replace retab / retaa with ret in text
         for off in range(0, text_end, 4):
@@ -58,11 +59,18 @@ def patch_pack(pack_dir):
                 # Non-hint PAC instructions like pacia, xpaci
                 data[off:off+4] = NOP
                 pac_count += 1
+            elif word[3] == 0x9A and (word[2] & 0xE0) == 0xC0 and (word[1] & 0xFC) == 0x30:
+                # pacga Rd, Rn, Rm (ARMv8.3-A): convert to eor Rd, Rn, Rm (ARMv8.0)
+                w = int.from_bytes(word, 'little')
+                rd, rn, rm = w & 31, (w >> 5) & 31, (w >> 16) & 31
+                new_w = 0xCA000000 | (rm << 16) | (rn << 5) | rd
+                data[off:off+4] = new_w.to_bytes(4, 'little')
+                pacga_count += 1
 
-        if ret_count > 0 or pac_count > 0:
+        if ret_count > 0 or pac_count > 0 or pacga_count > 0:
             with open(bin_path, 'wb') as f:
                 f.write(data)
-            print(f"Patched {name}: {ret_count} retab/retaa -> ret, {pac_count} pac/xpac -> nop")
+            print(f"Patched {name}: {ret_count} retab/retaa -> ret, {pac_count} pac/xpac -> nop, {pacga_count} pacga -> eor")
         else:
             print(f"Skipped {name}: no unsupported PAC instructions found")
 
