@@ -361,7 +361,6 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             env.add("DM_VK_ZSHARE_MB=1");
             env.add("DM_NUP_DISK_MB=16");
             env.add("DM_NUP_CACHE_MB=32");
-            env.add("DM_VK_IMG_LIMIT_MB=512");
         }
         int xb = Prefs.xboxButtons(this, id);   // Xbox button label swap (Game settings, Settings)
         if (xb > 0) env.add("DM_XBOX_LABELS=1");

@@ -12,7 +12,6 @@ A Switch 2 game: version 1.8.0, from a dump of one Application content (version 
 | `mem_alias 0x100000000`, `mem_reserve 0x300000000` | `game.tsv` | with a 1 GB alias region the SDK's AddressRegionManager node area (0x3fe00000) took nearly all of it, the regions the game maps physical memory into got no address, and the earlier base build read a null object 2 s into `nnMain`, every run. With a Switch-sized alias region its regions ended past +1.6 GB within 8 s; 4 GB holds the node area and the 1.5 GB the pool leaves beside the heap. `nninitStartup` sets the heap to the free application memory less a fixed reserve (`main+0x84790` in 1.8.0): 0x5dc00000 in 1.8.0, 0x60400000 before (whose Mac heap check measured 0x1dbc00000), so 1.8.0 asks for 0x1de400000 (7.47 GB, by that formula, not measured), still within the 7.75 GB heap region |
 | `app_pool 0x240000000` | `game.tsv` | the Switch 2's 9 GB, as Donkey Kong Bananza; in `nnMain` the engine's primary heap requests `0x1c2600000` (7.037 GB), so smaller pools fail with SIGSEGV at `main+0x5dd3ac` |
 | `render_cond on` | `game.tsv` | taken over from Donkey Kong Bananza (agl's render buffer binding); not checked on this game |
-| `draw_barriers game` | `game.tsv` | draw passes ordered by the game's own barriers, avoiding GPU pipeline drains across passes |
 
 ## Builds
 
