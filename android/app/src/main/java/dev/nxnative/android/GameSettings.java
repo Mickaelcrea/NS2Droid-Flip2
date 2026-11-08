@@ -108,32 +108,52 @@ final class GameSettings {
     }
 
     private static void resolution(MainActivity a, Game g, Runnable done) {
-        String[] labels = new String[Prefs.WINDOWS.length + 1];
+        int n = Prefs.WINDOWS.length;
+        String[] labels = new String[n + 2];
         labels[0] = "Default (" + Prefs.windowName(Prefs.defaultWindow(a, g.titleId), false) + ")";
-        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 1, Prefs.WINDOW_NAMES.length);
-        int checked = Prefs.ownWindow(a, g.titleId) ? 1 + Math.max(0, Arrays.asList(Prefs.WINDOWS).indexOf(Prefs.gameWindow(a, g.titleId))) : 0;
+        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 1, n);
+        boolean own = Prefs.ownWindow(a, g.titleId);
+        String cur = own ? Prefs.gameWindow(a, g.titleId) : null;
+        labels[n + 1] = own && Prefs.isCustomWindow(cur) ? "Custom (" + cur + ")" : "Custom";
+        int checked = 0;
+        if (own && cur != null) {
+            int idx = Arrays.asList(Prefs.WINDOWS).indexOf(cur);
+            if (idx >= 0) checked = 1 + idx;
+            else if (Prefs.isCustomWindow(cur)) checked = 1 + n;
+        }
         new AlertDialog.Builder(a).setTitle("Game resolution · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.gameWindow(a, g.titleId, w == 0 ? null : Prefs.WINDOWS[w - 1]);
-            x.dismiss();
-            done.run();
+            if (w == 0) {
+                Prefs.gameWindow(a, g.titleId, null);
+                x.dismiss();
+                done.run();
+            } else if (w <= n) {
+                Prefs.gameWindow(a, g.titleId, Prefs.WINDOWS[w - 1]);
+                x.dismiss();
+                done.run();
+            } else {
+                x.dismiss();
+                String init = own && Prefs.isCustomWindow(cur) ? cur : Prefs.defaultWindow(a, g.titleId);
+                MainActivity.promptCustomResolution(a, init, res -> {
+                    Prefs.gameWindow(a, g.titleId, res);
+                    done.run();
+                });
+            }
         }).setNegativeButton("Cancel", null).show();
     }
 
     private static void cap(MainActivity a, Game g, Runnable done) {
         int n = Prefs.FPS_CAPS.length;
-        String[] labels = new String[n + 2];
+        String[] labels = new String[n + 1];
         labels[0] = "Default (Settings: " + MainActivity.capLabel(Prefs.fpsCap(a)) + ")";
-        labels[1] = MainActivity.capLabel(-1);
         int checked = 0;
         boolean own = Prefs.ownFpsCap(a, g.titleId);
         int cur = Prefs.fpsCap(a, g.titleId);
-        if (own && cur < 0) checked = 1;
         for (int k = 0; k < n; k++) {
-            labels[k + 2] = MainActivity.capLabel(Prefs.FPS_CAPS[k]);
-            if (own && Prefs.FPS_CAPS[k] == cur) checked = k + 2;
+            labels[k + 1] = MainActivity.capLabel(Prefs.FPS_CAPS[k]);
+            if (own && Prefs.FPS_CAPS[k] == cur) checked = k + 1;
         }
         new AlertDialog.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.fpsCap(a, g.titleId, w == 0 ? null : w == 1 ? -1 : Prefs.FPS_CAPS[w - 2]);
+            Prefs.fpsCap(a, g.titleId, w == 0 ? null : Prefs.FPS_CAPS[w - 1]);
             x.dismiss();
             done.run();
         }).setNegativeButton("Cancel", null).show();

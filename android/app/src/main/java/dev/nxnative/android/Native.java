@@ -96,7 +96,7 @@ final class Native {
     /** Where the letterboxed picture sits in the window's free space (nxhost_picture_place), never scaled: 0 = left / top, 0.5 = centred, 1 = right / bottom. */
     static native void picturePlace(float x, float y);
 
-    /** The frame rate cap while the game runs: 0 = the game's own, else 15, 20, 30 or 60, the launcher's choices (Prefs.FPS_CAPS; nxhost_fps_cap_set) */
+    /** The frame rate cap while the game runs: 30 or 60, the launcher's choices (Prefs.FPS_CAPS; nxhost_fps_cap_set) */
     static native void fpsCapSet(int fps);
 
     /** "<cap> <rates> <game fps>": the cap in effect, a bit per cap this game can hold (the host's bits: 15, 20, 30, 40, 45, 60), the game's frame rate now; "-1 0 0" without a cap in the host. rates 0: the game picks its own frame rate */

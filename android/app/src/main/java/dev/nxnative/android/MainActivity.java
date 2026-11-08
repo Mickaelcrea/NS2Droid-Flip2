@@ -5,16 +5,21 @@ import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
+import android.text.Editable;
+import android.text.InputType;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -869,26 +874,133 @@ public final class MainActivity extends Activity {
 
     /** Game resolution: the window size the host gives the game (DM_WINDOW), from the next start */
     private void gameRes() {
-        int i = Math.max(0, java.util.Arrays.asList(Prefs.WINDOWS).indexOf(Prefs.window(this)));
-        new AlertDialog.Builder(this).setTitle("Game resolution").setSingleChoiceItems(Prefs.WINDOW_NAMES, i, (d, w) -> { Prefs.window(this, Prefs.WINDOWS[w]); refreshSettings(); d.dismiss(); })
-                .setNegativeButton("Cancel", null).show();
+        int n = Prefs.WINDOWS.length;
+        String cur = Prefs.window(this);
+        String[] labels = new String[n + 1];
+        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 0, n);
+        labels[n] = Prefs.isCustomWindow(cur) ? "Custom (" + cur + ")" : "Custom";
+        int checked = Prefs.isCustomWindow(cur) ? n : Math.max(0, java.util.Arrays.asList(Prefs.WINDOWS).indexOf(cur));
+        new AlertDialog.Builder(this).setTitle("Game resolution").setSingleChoiceItems(labels, checked, (d, w) -> {
+            if (w < n) {
+                Prefs.window(this, Prefs.WINDOWS[w]);
+                refreshSettings();
+                d.dismiss();
+            } else {
+                d.dismiss();
+                promptCustomResolution(this, Prefs.isCustomWindow(cur) ? cur : "1280x720", res -> {
+                    Prefs.window(this, res);
+                    refreshSettings();
+                });
+            }
+        }).setNegativeButton("Cancel", null).show();
     }
 
-    static String capLabel(int v) { return v < 0 ? "Default" : v == 0 ? "The game's own" : v + " fps"; }
+    /** Prompts the user to enter a custom resolution (Width x Height in px) */
+    static void promptCustomResolution(Activity a, String initialValue, java.util.function.Consumer<String> onSave) {
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        box.addView(Ui.small(a, "Enter custom resolution in pixels (Width × Height):"));
+
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+
+        EditText wField = new EditText(a);
+        wField.setHint("Width");
+        wField.setInputType(InputType.TYPE_CLASS_NUMBER);
+        wField.setGravity(Gravity.CENTER);
+        wField.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView xLabel = new TextView(a);
+        xLabel.setText("×");
+        xLabel.setTextSize(18);
+        xLabel.setTypeface(Typeface.DEFAULT_BOLD);
+        xLabel.setPadding(Ui.dp(a, 8), 0, Ui.dp(a, 8), 0);
+
+        EditText hField = new EditText(a);
+        hField.setHint("Height");
+        hField.setInputType(InputType.TYPE_CLASS_NUMBER);
+        hField.setGravity(Gravity.CENTER);
+        hField.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        row.addView(wField);
+        row.addView(xLabel);
+        row.addView(hField);
+        Ui.add(box, row, 12);
+
+        if (initialValue != null && initialValue.matches("\\d+x\\d+")) {
+            String[] parts = initialValue.split("x");
+            wField.setText(parts[0]);
+            hField.setText(parts[1]);
+            wField.setSelection(parts[0].length());
+        } else {
+            wField.setText("1280");
+            hField.setText("720");
+            wField.selectAll();
+        }
+
+        TextWatcher tw = new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            public void afterTextChanged(Editable s) {
+                String str = s.toString();
+                if (str.contains("x") || str.contains("X") || str.contains("*")) {
+                    String[] parts = str.split("[xX*]");
+                    if (parts.length >= 2) {
+                        wField.removeTextChangedListener(this);
+                        hField.removeTextChangedListener(this);
+                        wField.setText(parts[0].replaceAll("\\D", ""));
+                        hField.setText(parts[1].replaceAll("\\D", ""));
+                        wField.addTextChangedListener(this);
+                        hField.addTextChangedListener(this);
+                    }
+                }
+            }
+        };
+        wField.addTextChangedListener(tw);
+        hField.addTextChangedListener(tw);
+
+        AlertDialog d = Ui.sheet(a, "Custom resolution", box)
+                .setPositiveButton("Save", null)
+                .setNegativeButton("Cancel", null)
+                .create();
+
+        d.setOnShowListener(dialog -> {
+            Button saveBtn = d.getButton(AlertDialog.BUTTON_POSITIVE);
+            saveBtn.setOnClickListener(v -> {
+                String ws = wField.getText().toString().trim();
+                String hs = hField.getText().toString().trim();
+                int w = 0, h = 0;
+                try {
+                    w = Integer.parseInt(ws);
+                    h = Integer.parseInt(hs);
+                } catch (Exception ignored) {}
+                if (w <= 0 || h <= 0 || w > 65535 || h > 65535) {
+                    Toast.makeText(a, "Please enter valid width and height (1 - 65535)", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                d.dismiss();
+                onSave.accept(w + "x" + h);
+            });
+        });
+        d.show();
+    }
+
+    static String capLabel(int v) { return v + " fps"; }
 
     /** The frame rate cap the next start uses (Prefs.fpsCap, DM_FPS_TARGET); the in-game panel changes it while the game runs */
     private void fpsCap() {
         int cur = Prefs.fpsCap(this), n = Prefs.FPS_CAPS.length;
-        String[] labels = new String[n + 1];
-        labels[0] = capLabel(-1);
+        String[] labels = new String[n];
         int checked = 0;
         for (int k = 0; k < n; k++) {
             int v = Prefs.FPS_CAPS[k];
-            labels[k + 1] = capLabel(v);
-            if (v == cur) checked = k + 1;
+            labels[k] = capLabel(v);
+            if (v == cur) checked = k;
         }
         new AlertDialog.Builder(this).setTitle("Frame rate cap")
-                .setSingleChoiceItems(labels, checked, (d, w) -> { Prefs.fpsCap(this, w == 0 ? -1 : Prefs.FPS_CAPS[w - 1]); refreshSettings(); d.dismiss(); })
+                .setSingleChoiceItems(labels, checked, (d, w) -> { Prefs.fpsCap(this, Prefs.FPS_CAPS[w]); refreshSettings(); d.dismiss(); })
                 .setNegativeButton("Cancel", null).show();
     }
 

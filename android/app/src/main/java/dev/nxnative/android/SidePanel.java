@@ -125,8 +125,8 @@ final class SidePanel extends FrameLayout {
             int v = Prefs.FPS_CAPS[i];
             RadioButton b = new RadioButton(act);
             b.setId(2000 + i);
-            b.setText(v == 0 ? "The game's own" : v + " fps");
-            if (v == cur || v == 0 && cur < 0) b.setChecked(true);   // a cap the launcher does not offer (40, 45 from env.txt or DM_CTL): none checked, the line below says it
+            b.setText(v + " fps");
+            if (v == cur) b.setChecked(true);
             caps.addView(b);
         }
         caps.setOnCheckedChangeListener((g, id) -> {
@@ -179,8 +179,8 @@ final class SidePanel extends FrameLayout {
         String[] f = Native.fpsCapStatus().split(" ");
         int cap = Integer.parseInt(f[0]), rates = Integer.parseInt(f[1]), now = Integer.parseInt(f[2]);
         for (int i = 0; i < Prefs.FPS_CAPS.length; i++) {
-            int v = Prefs.FPS_CAPS[i], bit = v == 15 ? 0 : v == 20 ? 1 : v == 30 ? 2 : 5;   // the host's bits: 15, 20, 30, (40, 45,) 60
-            caps.getChildAt(i).setEnabled(v == 0 || cap >= 0 && (rates & 1 << bit) != 0);
+            int v = Prefs.FPS_CAPS[i], bit = v == 30 ? 2 : 5;   // the host's bits: 30 is bit 2, 60 is bit 5
+            caps.getChildAt(i).setEnabled(cap >= 0 && (rates & 1 << bit) != 0);
         }
         // No cap in this build, or a game that picks its own frame rate: no choices (they would do nothing), one line instead
         // (rates is 0 too until the game's main is loaded: only a game that presents, now > 0, is known to pick its own)

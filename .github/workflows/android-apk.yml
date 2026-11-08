@@ -21,6 +21,7 @@ on:
       - main
       - android
       - 'android-*'
+      - 'custom-*'
     paths:
       - 'android/**'
       - 'dm/**'
