@@ -24,7 +24,8 @@ if (nxApp && nxPlay) throw new GradleException('nxApp and nxPlay build different
 def nxLive = providers.gradleProperty('nxLive').getOrElse('false') == 'true'
 if (nxLive && (nxPlay || nxApp)) throw new GradleException('nxLive builds the release app: give neither nxPlay nor nxApp')
 def nxVersion = providers.gradleProperty('nxVersion').getOrElse('0.1-bringup')
-def nxVersionCode = providers.gradleProperty('nxVersionCode').getOrElse('1') as int
+def gitCommitCount = { try { providers.exec { commandLine(['git', 'rev-list', '--count', 'HEAD']); ignoreExitValue = true }.standardOutput.asText.get().trim() as int } catch (Exception e) { 1 } }
+def nxVersionCode = (providers.gradleProperty('nxVersionCode').orNull() ?: gitCommitCount()) as int
 def signStore = System.getenv('NX_SIGN_STORE'), signAlias = System.getenv('NX_SIGN_ALIAS'), signPass = System.getenv('NX_SIGN_PASS')
 if (nxLive && !(signStore && signAlias && signPass && new File(signStore).isFile()))
     throw new GradleException('nxLive needs the release key: NX_SIGN_STORE (an existing keystore), NX_SIGN_ALIAS and NX_SIGN_PASS')
@@ -146,13 +147,22 @@ android {
     }
     signingConfigs {
         if (nxLive) live { storeFile file(signStore); storePassword signPass; keyAlias signAlias; keyPassword signPass }
+        ci {
+            storeFile file('ci-signing.keystore')
+            storePassword 'android'
+            keyAlias 'ns2native'
+            keyPassword 'android'
+        }
     }
     buildTypes {
-        debug { jniDebuggable true }
+        debug {
+            jniDebuggable true
+            signingConfig(file('ci-signing.keystore').exists() ? signingConfigs.ci : signingConfigs.debug)
+        }
         release {
             minifyEnabled false
             debuggable !nxLive       // bring-up builds: run-as and the app's files stay reachable over adb; the release is not debuggable
-            signingConfig nxLive ? signingConfigs.live : signingConfigs.debug
+            signingConfig nxLive ? signingConfigs.live : (file('ci-signing.keystore').exists() ? signingConfigs.ci : signingConfigs.debug)
         }
     }
     externalNativeBuild {
