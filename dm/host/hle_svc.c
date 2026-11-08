@@ -92,7 +92,15 @@ static uint64_t app_pool_val(void) {
     static uint64_t p = 0;
     if (!p) {
         const char *e = getenv("DM_APP_POOL");
-        p = (e && *e) ? strtoull(e, NULL, 0) : DM_GAME_APP_POOL;
+        if (e && *e) {
+            p = strtoull(e, NULL, 0);
+        } else {
+            p = DM_GAME_APP_POOL;
+            const char *low = getenv("DM_LOW_MEM");
+            if (low && strcmp(low, "0") != 0 && p > UINT64_C(0x140000000)) {
+                p = UINT64_C(0x140000000);
+            }
+        }
     }
     return p;
 }

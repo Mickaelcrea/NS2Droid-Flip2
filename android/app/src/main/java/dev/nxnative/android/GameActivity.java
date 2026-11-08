@@ -361,6 +361,10 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             env.add("DM_VK_ZSHARE_MB=1");
             env.add("DM_NUP_DISK_MB=16");
             env.add("DM_NUP_CACHE_MB=32");
+            env.add("DM_VK_IMG_LIMIT_MB=512");
+            if ("0400C3F00006E000".equals(id)) {
+                env.add("DM_APP_POOL=0x140000000"); // 5.0 GiB cap for Switch 2 MKW on <=8GB phones (heap ~3.5 GB)
+            }
         }
         int xb = Prefs.xboxButtons(this, id);   // Xbox button label swap (Game settings, Settings)
         if (xb > 0) env.add("DM_XBOX_LABELS=1");
