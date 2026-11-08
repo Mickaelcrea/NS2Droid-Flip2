@@ -437,6 +437,12 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             String gpuNote = GpuDriver.env(this, id, env);   // the game's GPU driver, else the main screen's (DM_VK_DRIVER)
             String ts = Prefs.gpuTs(this, id);   // Game settings › GPU timing; unset: the profile's gpu_timestamps (a DM_NVN_GPU_TS line of env.txt or the game's own lines comes later and wins)
             if (ts != null) env.add("DM_NVN_GPU_TS=" + ts);
+            if (Prefs.gameLowRam(this, id)) {
+                env.add("DM_LOW_MEM=1");
+                env.add("DM_VK_PREFAULT=0");
+                env.add("DM_VK_IMEM_BLOCK_MB=16");
+                env.add("DM_VK_SCRATCH_MAX_MB=16");
+            }
             env.addAll(user);
             for (String kv : env) if (kv.startsWith("DM_OVERLAY=")) overlayEnv = !kv.substring(11).trim().equals("0");
             String[] args = {"nxhost", packDir.getPath()};
@@ -726,6 +732,16 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
     @Override public void onConfigurationChanged(Configuration c) {
         super.onConfigurationChanged(c);
         if (started) Native.motionRotation(getDisplay().getRotation());
+    }
+
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (started) Native.trimMemory(level);
+    }
+
+    @Override public void onLowMemory() {
+        super.onLowMemory();
+        if (started) Native.trimMemory(80);   // ComponentCallbacks2.TRIM_MEMORY_COMPLETE
     }
 
     @Override public void surfaceCreated(SurfaceHolder h) { Native.setSurface(h.getSurface()); }

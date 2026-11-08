@@ -3,6 +3,7 @@
 #if defined(__ANDROID__)
 #include "vka.h"
 #include <dlfcn.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -415,14 +416,35 @@ void vka_mem_grew(uint64_t bytes) {
 // before its first frame, and the phone's low-memory killer stopped it
 static void sblk_trim(uint64_t done, uint64_t udone) {
     VkDeviceSize idle = 0;
+    VkDeviceSize max_idle = (getenv("DM_LOW_MEM") && strcmp(getenv("DM_LOW_MEM"), "0") != 0) ? (16u << 20) : (64u << 20);
+    const char *e = getenv("DM_VK_SCRATCH_MAX_MB");
+    if (e && *e) max_idle = (VkDeviceSize)strtoul(e, NULL, 10) << 20;
+    VkDeviceSize max_block = max_idle < (16u << 20) ? max_idle : (16u << 20);
     for (sblk **pp = &g_busy; *pp;) {
         sblk *b = *pp;
         int id = sblk_idle(b, done, udone);
-        if (id && (b->size > (16u << 20) || idle + b->size > (64u << 20))) {
+        if (id && (b->size > max_block || idle + b->size > max_idle)) {
             *pp = b->next; vk.vkUnmapMemory(V.dev, b->mem); vk.vkDestroyBuffer(V.dev, b->buf, NULL); vk.vkFreeMemory(V.dev, b->mem, NULL);
             atomic_fetch_sub(&g_scratch_bytes, b->size); atomic_fetch_sub(&g_scratch_n, 1); free(b);
         } else { if (id) idle += b->size; pp = &b->next; }
     }
+}
+void nxhost_trim_memory(int level) {
+    (void)level;
+    uint64_t done = vka_done(), udone = up_done();
+    pthread_mutex_lock(&g_smu);
+    for (sblk **pp = &g_busy; *pp;) {
+        sblk *b = *pp;
+        if (sblk_idle(b, done, udone)) {
+            *pp = b->next; vk.vkUnmapMemory(V.dev, b->mem); vk.vkDestroyBuffer(V.dev, b->buf, NULL); vk.vkFreeMemory(V.dev, b->mem, NULL);
+            atomic_fetch_sub(&g_scratch_bytes, b->size); atomic_fetch_sub(&g_scratch_n, 1); free(b);
+        } else pp = &b->next;
+    }
+    pthread_mutex_unlock(&g_smu);
+    vka_imem_trim();
+#if defined(__ANDROID__)
+    malloc_trim(0);
+#endif
 }
 int vka_scratch(VkDeviceSize n, VkDeviceSize align, vka_span *out) {
     if (!align) align = 16;

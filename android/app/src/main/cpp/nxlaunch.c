@@ -49,6 +49,7 @@ int nxhost_main(int argc, char **argv);
 #pragma weak nxhost_fps_cap_set
 #pragma weak nxhost_fps_cap_status
 #pragma weak nxhost_text_input_callback
+#pragma weak nxhost_trim_memory
 
 // ---- Log: the host's stdout and stderr go straight into the log file (nothing is lost when the process dies), and a thread copies new lines to logcat ----
 // At the end of the file the thread sleeps until the file is written (inotify IN_MODIFY), not on a 20 ms timer: the timer woke it 50 times a second for the whole game,
@@ -296,6 +297,10 @@ JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_openLog(JNIEnv *env, jcl
     (void)cls; char *lp = jstr(env, log); int r = log_open(lp); free(lp); return r;
 }
 JNIEXPORT jboolean JNICALL Java_dev_nxnative_android_Native_hasSelftest(JNIEnv *env, jclass cls) { (void)env; (void)cls; return nxhost_vk_selftest != NULL; }
+JNIEXPORT void JNICALL Java_dev_nxnative_android_Native_trimMemory(JNIEnv *env, jclass cls, jint level) {
+    (void)env; (void)cls;
+    if (nxhost_trim_memory) nxhost_trim_memory(level);
+}
 // Blocks for about frames / 60 s: call it on a thread of its own. 0 = every check passed; -1 = this host has no selftest
 JNIEXPORT jint JNICALL Java_dev_nxnative_android_Native_selftest(JNIEnv *env, jclass cls, jobject surface, jint frames) {
     (void)cls; if (!nxhost_vk_selftest) return -1;

@@ -45,15 +45,38 @@ final class Prefs {
 
     /** The game's window size: its own choice, else the default (defaultWindow) */
     static String gameWindow(Context c, String titleId) { return of(c).getString(gameKey("window", titleId), defaultWindow(c, titleId)); }
-    /** A game's default window size: the main screen's when the player chose one there, else its profile's android_window (a workaround for one game, game.tsv), else Phone 1080p */
+    /** A game's default window size: the main screen's when the player chose one there, else Phone 720p in Low RAM mode, else its profile's android_window, else Phone 1080p */
     static String defaultWindow(Context c, String titleId) {
         if (of(c).contains("window")) return window(c);
+        if (gameLowRam(c, titleId)) return "1280x720";
         Profile p = Profile.of(titleId);
         return p != null && java.util.Arrays.asList(WINDOWS).contains(p.window) ? p.window : WINDOWS[0];
     }
     /** null: back to the default */
     static void gameWindow(Context c, String titleId, String v) { put(c, gameKey("window", titleId), v); }
     static boolean ownWindow(Context c, String titleId) { return of(c).contains(gameKey("window", titleId)); }
+
+    /** Whether this phone has <= 8.5 GB RAM (typical 8GB devices report ~7.2 to 7.8 GB totalMem) */
+    static boolean isLowRamDevice(Context c) {
+        android.app.ActivityManager am = (android.app.ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am == null) return false;
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        return mi.totalMem <= 8500000000L;
+    }
+
+    /** Low RAM mode (optimized for <= 8GB RAM devices like Snapdragon 870): aggressive trim, 16MB slabs, prefault off, 720p default */
+    static boolean lowRam(Context c) { return of(c).getBoolean("low_ram", isLowRamDevice(c)); }
+    static void lowRam(Context c, boolean on) { of(c).edit().putBoolean("low_ram", on).commit(); }
+
+    static boolean gameLowRam(Context c, String titleId) {
+        return of(c).getBoolean(gameKey("low_ram", titleId), lowRam(c));
+    }
+    static void gameLowRam(Context c, String titleId, Boolean v) {
+        if (v == null) of(c).edit().remove(gameKey("low_ram", titleId)).commit();
+        else of(c).edit().putBoolean(gameKey("low_ram", titleId), v).commit();
+    }
+    static boolean ownLowRam(Context c, String titleId) { return of(c).contains(gameKey("low_ram", titleId)); }
 
     /**
      * The frame rate cap (the in-game panel): -1 = not set (the game profile's fps_target), 0 = the game's own, else 15, 20, 30 or 60. DM_FPS_TARGET for the host at

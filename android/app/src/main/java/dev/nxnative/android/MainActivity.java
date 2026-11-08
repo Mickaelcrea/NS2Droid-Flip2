@@ -48,7 +48,7 @@ public final class MainActivity extends Activity {
     private LinearLayout gameBox;   // the game cards (refresh)
     private View accessCard;
     private BananaBackgroundView bananas;   // the drifting bananas behind the screen
-    private Ui.Setting overlayRow, resRow, capRow, lsfgRow, gpuRow, updateRow;
+    private Ui.Setting overlayRow, resRow, capRow, lsfgRow, gpuRow, updateRow, lowRamRow;
     private boolean resumed, settingsPage;
     private boolean merged;   // the list's duplicates were merged (Game.collapse) since this activity started
     private File pendingGame;   // a game folder (or .nup) waiting for its pack folder
@@ -105,6 +105,7 @@ public final class MainActivity extends Activity {
 
     private void buildHome(LinearLayout content) {
         overlayRow = null;
+        lowRamRow = null;
         content.addView(Ui.header(this, Ui.badge(this, 44), "NS2Native", Prefs.buildId(), Ui.iconButton(this, R.drawable.ic_settings, "Settings", Ui.Kind.TONAL, v -> page(true))));   // the build identifier under the title (Prefs.buildId, the part of the overlay's build tag after the app's name), so a screenshot of Home names its build; Settings › About has the full tag
         accessCard = accessCard();
         Ui.add(content, accessCard, 16);
@@ -159,6 +160,9 @@ public final class MainActivity extends Activity {
         play.addView(capRow.view);
         lsfgRow = new Ui.Setting(this, "✨", "Frame generation", v -> frameGen()).chevron(this);
         play.addView(lsfgRow.view);
+        lowRamRow = new Ui.Setting(this, "🧠", "Low RAM mode", null)
+                .toggle(this, Prefs.lowRam(this), (b, on) -> { Prefs.lowRam(this, on); refreshSettings(); });
+        play.addView(lowRamRow.view);
         TextView hint = Ui.small(this, "A game's own settings (⋯ on its card) override these.");
         hint.setPadding(dp(4), 0, dp(4), 0);
         Ui.add(content, hint, 8);
@@ -204,6 +208,11 @@ public final class MainActivity extends Activity {
         resRow.value(resLabel());
         capRow.value(capLabel(Prefs.fpsCap(this)));
         lsfgRow.value(!BuildConfig.NX_LSFG ? "Not in this build" : Lsfg.on(this) ? "On · " + Lsfg.multiplier(this) + "x" + (Lsfg.find(this) == null ? " · Lossless.dll missing" : "") : "Off");
+        if (lowRamRow != null) {
+            boolean lr = Prefs.lowRam(this);
+            if (lowRamRow.toggle.isChecked() != lr) lowRamRow.toggle.setChecked(lr);
+            lowRamRow.value(lr ? "On (recommended for <= 8GB RAM)" : "Off");
+        }
         GpuDriver.Info d = GpuDriver.selected(this);
         gpuRow.value(d == null ? "System" : d.label());
     }

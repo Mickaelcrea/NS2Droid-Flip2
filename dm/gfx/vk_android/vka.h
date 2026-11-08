@@ -206,6 +206,7 @@ VkResult vka_imem_bind_zero(VkImage img, uint32_t type, const VkMemoryRequiremen
 uint64_t vka_imem_zbytes(void); uint64_t vka_imem_zbytes_nolock(void);   // bytes of the zero-shared allocations
 void vka_imem_zowned(void);   // a zero-shared image got memory of its own (vka_tex.c img_own): counted for the stats line
 void vka_imem_free(vka_imem *m);   // after vkDestroyImage, once the GPU is done with the image
+void vka_imem_trim(void);          // free all empty image memory blocks (e.g. on memory pressure)
 void vka_imem_stats(char *b, size_t n);
 uint64_t vka_imem_allocations(void);   // VkDeviceMemory objects the images hold (blocks + dedicated)
 typedef struct vka_img {

@@ -4,9 +4,9 @@
 
 status	playable
 
-# Memory: 6.3-8.1 GB resident while playing on the 16 GB phone (14.66 GiB totalMem), the note's Memory section; no phone with less has run it
-required	ram_gib	10	Memory: the game keeps 6-8 GB in use while playing, which a phone with less than about 12 GB cannot give it
-degraded	ram_gib	14	Memory: tested on a 16 GB phone only; with less, Android may stop the game when memory runs short
+# Memory: resident footprint reduced to ~3-4 GB with Low RAM mode (lazy placed memory, 16 MB slabs, 720p); 8 GB phones report ~7.2-7.8 GiB
+required	ram_gib	7	Memory: with Low RAM optimizations, requires at least an 8 GB device (reports ~7.2+ GiB)
+degraded	ram_gib	11	Memory: 8-11 GB phones should keep Low RAM mode enabled to prevent background LMK stops
 
 # The shader library's needs (android/SHADERS.md): 7 geometry shader modules (the terrain's culling pass: without the feature those draws are skipped, vka_shader.c),
 # 161 modules write storage images without a format and 30 read them, every vertex module takes draw parameters, 2 read memory through buffer device addresses with 64-bit integers

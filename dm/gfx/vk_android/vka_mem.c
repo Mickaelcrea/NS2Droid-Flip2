@@ -435,7 +435,15 @@ static int place(uintptr_t lo, uintptr_t hi, VkDeviceSize *grow) {
             if (a != MAP_FAILED && !vk.vkMapMemory(V.dev, s.mem, 0, VK_WHOLE_SIZE, 0, &p)) { memcpy((void *)lo, p, n); vk.vkUnmapMemory(V.dev, s.mem); }
         }
     }
-    static int pf = -1; if (pf < 0) { const char *e = getenv("DM_VK_PREFAULT"); pf = !(e && !strcmp(e, "0")); if (!pf) VLOG("DM_VK_PREFAULT=0: placed maps are not faulted in (a diagnostic: DM_VK_NANSCAN's placed memory test shows whether the driver needs it)"); }
+    static int pf = -1;
+    if (pf < 0) {
+        const char *e = getenv("DM_VK_PREFAULT");
+        if (e && *e) pf = strcmp(e, "0") != 0;
+        else if (getenv("DM_LOW_MEM") && strcmp(getenv("DM_LOW_MEM"), "0") != 0) pf = 0;
+        else if (V.driver_id == VK_DRIVER_ID_MESA_TURNIP || (V.props.deviceName && !strstr(V.props.deviceName, "840"))) pf = 0;
+        else pf = 1;
+        if (!pf) VLOG("placed memory: prefault off (DM_VK_PREFAULT=0 or low memory / %s driver; untouched pages stay uncommitted)", V.props.deviceName ? V.props.deviceName : "current");
+    }
     p3 = mono_ns();
     if (ok && pf) prefault(lo, hi);   // before any mprotect splits the mapping (see prefault)
     p4 = mono_ns();

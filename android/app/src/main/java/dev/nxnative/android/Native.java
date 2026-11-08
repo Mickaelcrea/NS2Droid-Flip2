@@ -114,4 +114,7 @@ final class Native {
 
     /** nxhost_vk_selftest(window, frames): blocks for about frames / 60 s. 0 = passed, -1 = not in this host. */
     static native int selftest(Surface surface, int frames);
+
+    /** Trims host and graphics caches on low memory pressure (onTrimMemory / onLowMemory). */
+    static native void trimMemory(int level);
 }

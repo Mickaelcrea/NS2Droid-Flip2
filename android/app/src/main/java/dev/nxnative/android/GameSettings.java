@@ -38,6 +38,10 @@ final class GameSettings {
         Ui.Setting ret = new Ui.Setting(a, "⏸️", "Pause on return", null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on));
         ret.value("Coming back from the background, the game waits paused for a tap");
         Ui.add(box, ret.view, 0);
+        Ui.Setting lr = new Ui.Setting(a, "🧠", "Low RAM mode", null)
+                .toggle(a, Prefs.gameLowRam(a, id), (b, on) -> Prefs.gameLowRam(a, id, on));
+        lr.value(Prefs.ownLowRam(a, id) ? (Prefs.gameLowRam(a, id) ? "On" : "Off") : "Default · " + (Prefs.lowRam(a) ? "On" : "Off"));
+        Ui.add(box, lr.view, 0);
         String env = Prefs.gameEnv(a, id);
         Ui.add(box, new Ui.Setting(a, "🧪", "Extra environment", v -> env(a, g, again))
                 .value(env.isEmpty() ? "None (KEY=VALUE lines for the host, after env.txt)" : env.split("\n").length + " line(s): " + env.replace('\n', ' ')).chevron(a).view, 0);
