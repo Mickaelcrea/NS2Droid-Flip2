@@ -65,10 +65,10 @@ final class Prefs {
         }
         return v;
     }
-    /** A game's default window size: the main screen's when the player chose one there, else Phone 720p in Low RAM mode, else its profile's android_window, else 720p */
+    /** A game's default window size: Phone 720p in Low RAM mode, else the main screen's when the player chose one there, else its profile's android_window, else 720p */
     static String defaultWindow(Context c, String titleId) {
-        if (of(c).contains("window")) return window(c);
         if (gameLowRam(c, titleId)) return "1280x720";
+        if (of(c).contains("window")) return window(c);
         Profile p = Profile.of(titleId);
         return p != null && java.util.Arrays.asList(WINDOWS).contains(p.window) ? p.window : WINDOWS[0];
     }

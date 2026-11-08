@@ -406,7 +406,9 @@ static uint64_t dense_bytes(const nvn_texdesc *d, const nvn_texlayout *L, uint32
     uint64_t lo = nvn_tex_level_offset(d, b); return (L->layer_size > lo ? L->layer_size - lo : 0) * (L->layers ? L->layers : 1);
 }
 static uint32_t dense_floor(const nvn_texdesc *d, const nvn_texlayout *L, uint32_t b) {
-    double cap = VKA_ENVF("DM_VK_SPARSE_DENSE_MB", 128.0) * 1048576.0; uint32_t n = d->levels ? d->levels : 1;
+    const char *low = getenv("DM_LOW_MEM");
+    double def_cap = (low && strcmp(low, "0") != 0) ? 32.0 : 128.0;
+    double cap = VKA_ENVF("DM_VK_SPARSE_DENSE_MB", def_cap) * 1048576.0; uint32_t n = d->levels ? d->levels : 1;
     if (cap <= 0 || d->target == NVN_TEXTURE_TARGET_3D || !sparse_levels_on()) return b;
     while (b + 1 < n && (double)dense_bytes(d, L, b) > cap) b++;
     return b;

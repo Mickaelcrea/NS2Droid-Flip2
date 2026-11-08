@@ -440,7 +440,8 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             if (Prefs.gameLowRam(this, id)) {
                 env.add("DM_LOW_MEM=1");
                 env.add("DM_VK_PREFAULT=0");
-                env.add("DM_VK_IMEM_BLOCK_MB=16");
+                env.add("DM_VK_IMGMEM_BLOCK_MB=16");
+                env.add("DM_VK_SPARSE_DENSE_MB=32");
                 env.add("DM_VK_SCRATCH_MAX_MB=16");
                 env.add("DM_VK_PLACE_PART_MB=16");
                 env.add("DM_VK_UPLOAD_BATCH_MB=16");
