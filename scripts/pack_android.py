@@ -360,6 +360,33 @@ def map_keys(path):
     with open(path) as f: return {c[3] for c in (l.rstrip('\n').split('\t') for l in f) if len(c) > 4 and c[0].endswith('.bin')}
 
 
+def selected_keys(g):
+    """The profile's selected shaders (shader_seen.tsv, android/SHADERS.md "Selected shaders"), taken as the phone's Prepare takes them (ShaderLibs.selection):
+    the keys of its rows that the profile's shader_map.tsv has, sorted, each once; vk_android_build.py adds their pixel shaders (build_keys). None without a
+    selection (the whole map is built) or with DM_PACK_ALL_SHADERS=1. Pokopia: 8,161 of 131,426, so a computer builds the phone's library in minutes, not the
+    whole map's 9.8 GB in hours"""
+    seen = g.dir / 'shader_seen.tsv'
+    if os.environ.get('DM_PACK_ALL_SHADERS') or not seen.is_file(): return None
+    in_map = set()
+    with open(g.dir / 'shader_map.tsv', encoding='utf-8') as f:
+        for l in f:
+            if not l.strip() or l.startswith('#') or l.startswith('package\t'): continue
+            c = l.rstrip('\r\n').split('\t', 4)
+            if len(c) > 3: in_map.add(c[3])
+    keys = set()
+    with open(seen, encoding='utf-8') as f:
+        for l in f:
+            k = l[:16]
+            if len(k) == 16 and all(ch in '0123456789abcdef' for ch in k) and k in in_map: keys.add(k)
+    return sorted(keys)
+
+
+# Starts vk_android_build.py (or its Windows wrapper) with a key list read from a file: thousands of keys on the command line pass Windows' 32,767-character limit.
+# The script runs as `python <script>` would run it: its folder first on sys.path, sys.argv its own
+KEYS_FROM_FILE = ('import os, runpy, sys; s, kf = sys.argv[1], sys.argv[-1]; sys.path.insert(0, os.path.dirname(s)); '
+                  'sys.argv = [s] + sys.argv[2:-1] + open(kf, encoding="utf-8").read().split(); runpy.run_path(s, run_name="__main__")')
+
+
 def split_shaders(a, g, vdir, pkg, parts=None):   # parts: the version's (romfs, exefs) when they are not vdir's own (pack_dump.version_part)
     """The Switch shader package from the dump, as the phone's split step makes it (the version's romfs and main, android/app PackService "split"): shader_split.py into
     <pkg> (written beside it, then renamed, so a stopped split leaves no half package). Its tables go beside the package. The library is the profile's (its shader_map.tsv
@@ -400,7 +427,13 @@ def pack_shaders(a, g, work, out, vdir, parts=None):
         print(f'shaders: building the Vulkan library {lib} from {pkg} with {py} (J={a.J}; about 10 minutes on DKB)', flush=True)
         (work / 'android-shaders' / 'work').mkdir(parents=True, exist_ok=True)
         env = child_env(DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
-        r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache)], env=env)
+        script, args = str(VK_BUILD_WIN if WINDOWS else VK_BUILD), ['--target', 'vulkan', str(pkg), str(cache)]
+        if (sel := selected_keys(g)):
+            kf = work / 'android-shaders' / 'selected_keys.txt'; write_lf(kf, '\n'.join(sel) + '\n')
+            print(f'shaders: the {len(sel)} selected shaders of {g.id} (shader_seen.tsv) and their pixel shaders, as the phone builds them (DM_PACK_ALL_SHADERS=1: the whole map)', flush=True)
+            cmd = [py, '-c', KEYS_FROM_FILE, script, *args, str(kf)]
+        else: cmd = [py, script, *args]
+        r = subprocess.run(cmd, env=env)
         if r.returncode: raise Error(f'vk_android_build.py exit code {r.returncode} (a package that lacks the profile\'s shaders stops it: delete {pkg} and the split runs again)')
         if not library_current(lib, g): raise Error(f'vk_android_build.py finished but {lib} is not a full library of {g.id} with the current inputs')
     else: print(f'shaders: {lib} is current (game {g.id}, inputs {dmsh_chain.inputs(g)})')
