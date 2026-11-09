@@ -402,7 +402,10 @@ def split_shaders(a, g, vdir, pkg, parts=None):   # parts: the version's (romfs,
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
     if (g.dir / 'shader_map.tsv').is_file():
         want, have = map_keys(g.dir / 'shader_map.tsv'), map_keys(tmp / 'shader_map.tsv')
-        if missing := sorted(want - have):
+        if (missing := sorted(want - have)) and getattr(a, 'other_build', False):
+            print(f'[RED] the dump\'s shaders lack {len(missing)} of the {len(want)} in the profile\'s shader_map.tsv (another game version, Try anyway): '
+                  f'the library is built without them', flush=True)
+        elif missing:
             raise Error(f'the dump\'s shaders lack {len(missing)} of the {len(want)} in the profile\'s shader_map.tsv (e.g. {", ".join(missing[:3])}): the dump is of another version '
                         f'or incomplete, and the profile\'s shader library cannot be built from it (the split is in {tmp})')
         for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv'):
@@ -427,7 +430,8 @@ def pack_shaders(a, g, work, out, vdir, parts=None):
         print(f'shaders: building the Vulkan library {lib} from {pkg} with {py} (J={a.J}; about 10 minutes on DKB)', flush=True)
         (work / 'android-shaders' / 'work').mkdir(parents=True, exist_ok=True)
         env = child_env(DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
-        script, args = str(VK_BUILD_WIN if WINDOWS else VK_BUILD), ['--target', 'vulkan', str(pkg), str(cache)]
+        if getattr(a, 'other_build', False): env['DMSH_VK_REQUIRE_ALL'] = '0'   # Try anyway: a shader this version's package lacks is left out, not a stop
+        script, args =str(VK_BUILD_WIN if WINDOWS else VK_BUILD), ['--target', 'vulkan', str(pkg), str(cache)]
         if (sel := selected_keys(g)):
             kf = work / 'android-shaders' / 'selected_keys.txt'; write_lf(kf, '\n'.join(sel) + '\n')
             print(f'shaders: the {len(sel)} selected shaders of {g.id} (shader_seen.tsv) and their pixel shaders, as the phone builds them (DM_PACK_ALL_SHADERS=1: the whole map)', flush=True)
@@ -508,6 +512,12 @@ def main():
         print(f'{app:016X} {g.get("name", "?")} version {ver}: {vdir}', flush=True)
         for m in mods:
             if known.get(m) and known[m] != ids[m]: print(f'[RED] {m} build {ids[m]} is not the profile\'s build {known[m]}: build-gated cuts do not apply')
+        # Another game version than the profile's builds: packed as the phone's Try anyway packs it (DumpLayout anyBuild, DMSH_VK_REQUIRE_ALL=0), untested. The split's
+        # check for the profile's shaders and the library's need for all of them are relaxed: shaders this version lacks are left out (counted in [RED] lines).
+        # The app then shows the game as untested and Play asks first (BuildCheck UNSUPPORTED)
+        a.other_build = any(known.get(m) and known[m] != ids[m] for m in mods)
+        if a.other_build: print(f'[RED] version {ver} is not one this profile was made from ({", ".join(sorted(g.builds()))}): packing it anyway (Try anyway), untested: '
+                                f'it may not start, may crash, or may show parts wrong', flush=True)
         if a.keep_code:
             # each module needs its rewritten code and, written last by the rewrite, its key: a module without the key is a rewrite that did not finish (or one from before keys)
             gaps = [f'{m} ({" and ".join(f for f in (f"{m}.patched.bin", f"{m}.android.key") if not (out / f).is_file())} missing)'
