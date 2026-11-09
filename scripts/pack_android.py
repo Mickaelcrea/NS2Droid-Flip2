@@ -397,6 +397,10 @@ def split_shaders(a, g, vdir, pkg, parts=None):   # parts: the version's (romfs,
     tmp = pkg.with_name(pkg.name + '.tmp'); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
     print(f'shaders: splitting the shaders out of {rd} into {pkg} with {py} (a few minutes)', flush=True)
     env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1')   # as the phone: only the files the profile's map names, when the build is the profile's and the tables come out the same
+    # Windows: the split's scan runs in this one process (J=1, as on the phone). Its worker processes send each batch's shaders back through a pipe, and Windows'
+    # multiprocessing writes a result in one WriteFile, which fails past its size limit ([WinError 87] in _send_bytes: Pokopia 327680's full scan, batch 51 of 67);
+    # macOS and Linux send it in parts. J=1 scans Pokopia in about a minute on a Mac. J in the environment still wins
+    if WINDOWS and 'J' not in os.environ: env['J'] = '1'
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),
                         *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')]], env=env)
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
