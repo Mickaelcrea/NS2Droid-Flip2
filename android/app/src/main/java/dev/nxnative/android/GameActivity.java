@@ -366,7 +366,6 @@ public final class GameActivity extends Activity implements SurfaceHolder.Callba
             env.add("DM_VK_IMGMEM_BLOCK_MB=16");
             env.add("DM_VK_SPARSE_DENSE_MB=32");
             env.add("DM_VK_SCRATCH_MAX_MB=16");
-            env.add("DM_VK_PLACE_PART_MB=16");
             env.add("DM_VK_UPLOAD_BATCH_MB=16");
             env.add("DM_VK_UPLOAD_INFLIGHT_MB=64");
             env.add("DM_VK_ZSHARE_MB=1");
