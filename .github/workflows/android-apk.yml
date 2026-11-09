@@ -30,7 +30,7 @@ on:
       - '.github/workflows/android-apk.yml'
 
 permissions:
-  contents: read
+  contents: write   # the release step publishes the APK (and its matching packer) as a GitHub Release
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -110,3 +110,24 @@ jobs:
             android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      # NS2Droid-Flip2: each build of main becomes a release, so the APK downloads straight from the handheld's browser (no GitHub sign-in, no zip).
+      # The pack must come from the same commit as the APK: the release notes name it, and its source archive holds the matching scripts\bananative.bat.
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="flip2-${GITHUB_RUN_NUMBER}"
+          SHORT="${GITHUB_SHA::12}"
+          APK=$(ls android/app/out/*.apk 2>/dev/null | head -1)
+          [ -n "$APK" ] || APK=$(find android/app/build/outputs/apk -name '*.apk' | head -1)
+          cp "$APK" "NS2Droid-Flip2-${GITHUB_RUN_NUMBER}.apk"
+          printf '%s\n' \
+            "Build of commit ${SHORT} for the Retroid Pocket Flip 2 (Snapdragon 865, 8 GB)." \
+            "" \
+            "Prepare the game with the packer from this same commit: Source code (zip) below, then scripts\\bananative.bat." \
+            "A pack made with another build may need its shaders prepared again." > notes.md
+          gh release create "$TAG" "NS2Droid-Flip2-${GITHUB_RUN_NUMBER}.apk" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "NS2Droid Flip2 #${GITHUB_RUN_NUMBER}" --notes-file notes.md --latest

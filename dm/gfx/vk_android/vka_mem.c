@@ -756,9 +756,10 @@ static int lazy_on(void) { static int v = -1; if (v < 0) { v = VKA_ENV("DM_VK_PL
 static uint64_t part_min(void) {
     static int64_t v = -1;
     if (v < 0) {
-        const char *low = getenv("DM_LOW_MEM");
-        int64_t def = (low && strcmp(low, "0") != 0) ? 16 : 1024;
-        v = (int64_t)VKA_ENV("DM_VK_PLACE_PART_MB", def) << 20;
+        // 1024 MiB in every mode. Low RAM mode used 16, which places pools of 16 MiB and more by parts: a buffer given across two parts lies in two segments,
+        // and lookups that need it in one piece fail ([RED] … across two of its parts). fbe2276 removed the launcher's DM_VK_PLACE_PART_MB=16 for that reason,
+        // but this default still applied it under DM_LOW_MEM=1
+        v = (int64_t)VKA_ENV("DM_VK_PLACE_PART_MB", 1024) << 20;
         if (v < 0) v = 0;
         if (!v) VLOG("DM_VK_PLACE_PART_MB=0: every memory pool is placed whole");
     }

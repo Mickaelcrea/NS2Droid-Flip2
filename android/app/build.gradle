@@ -106,8 +106,9 @@ android {
     ndkVersion '28.2.13676358'
 
     defaultConfig {
-        applicationId nxLive ? 'dev.ns2droid.android' : nxPlay ? 'dev.ns2droid.android.play' : nxApp ? "dev.ns2droid.android.$nxApp" : 'dev.ns2droid.android'
-        resValue 'string', 'app_name', nxPlay || nxLive ? 'NS2Droid' : nxApp ? nxLabel : 'NS2Droid'
+        // NS2Droid-Flip2: its own application ID, so an APK from another NS2Droid build can neither install over this one nor be taken for it
+        applicationId nxLive ? 'dev.ns2droid.flip2' : nxPlay ? 'dev.ns2droid.flip2.play' : nxApp ? "dev.ns2droid.flip2.$nxApp" : 'dev.ns2droid.flip2'
+        resValue 'string', 'app_name', nxPlay || nxLive ? 'NS2Droid Flip2' : nxApp ? nxLabel : 'NS2Droid Flip2'
         minSdk 33
         targetSdk 35
         versionCode nxVersionCode
