@@ -50,6 +50,8 @@ Open nxnative and tap **Grant All files access**, then turn on "Allow access to 
 adb shell appops set --uid dev.nxnative.android MANAGE_EXTERNAL_STORAGE allow
 ```
 
+Without it, Add game offers **A .nup file (used where it is)**, read through the file picker's permission with nothing copied, and **A dump folder (copied into the app)** ([The launcher](README.md#the-launcher)): the copy lands in `Android/data/<app>/files/games/`; both run without All files access, and Back up saves then exports a `.zip` through the picker. To try that path on a phone that has it on, turn it off first (`adb shell appops set --uid dev.nxnative.android MANAGE_EXTERNAL_STORAGE default`) and back on afterwards.
+
 ## 5. Add the game
 
 Tap **Add game**, open `SW2`, then `DonkeyKongBananza`, and tap **Use this folder** (allow access when asked). The launcher finds the pack in `SW2/040074A01BF12000-work/android-pack` (or any `<title ID>-work/<name>/` with a `pack.tsv` in the game's folder or up to three folders above it, `PackFind`) and lists "Donkey Kong Bananza (040074A01BF12000)" with no question when the pack fits (the dump's game build, this APK's shader library, or an older library the automatic shader update brings current). Without one it offers **Prepare** (above), **Use an existing pack…** or **Import pack…**. Picking `SW2` itself adds every game in it (each `.nup` and dump subfolder) and says in one message what was added, what this app cannot run and what needs Prepare.
@@ -118,7 +120,7 @@ Up to 0.1.0 the default was on shared storage, beside the game (the folder holdi
 
 After that, an empty app save is filled from the private save of the first versions (`files/save/<title ID>`, kept), else from the seed `/sdcard/Switch2/save-seed/<title ID>/`, a save that reaches the first level. The log's `[nxlaunch] save: <path> (migrated|seeded|existing|new)` says which. If the folder cannot be created, the private folder is used and the log says so.
 
-Each game has its own save folder, `DM_TEMP` (`files/temp/<title ID>`: pipeline cache, prewarm list), DLC links (`files/aoc/<title ID>`) and logs (`files/logs/<title ID>-<time>.log`, 10 kept per game); `env.txt` applies to every game, `files/env-<title ID>.txt` (written and `chmod 666`ed like `env.txt`) to one.
+Each game has its own save folder, `DM_TEMP` (`files/temp/<title ID>`: pipeline cache, prewarm list), DLC links (`aoc/<title ID>` in internal app storage, `/data/user/0/<app>/files`: shared storage refuses links; the log's `[nxlaunch] DLC:` line names them) and logs (`files/logs/<title ID>-<time>.log`, 10 kept per game); `env.txt` applies to every game, `files/env-<title ID>.txt` (written and `chmod 666`ed like `env.txt`) to one.
 
 **Test agents** start from the seed: give the run its own save folder (a copy of the seed: `--es save <folder>` on the launcher's intent, or `DM_SAVE=` in `env-<title ID>.txt`, below) rather than deleting anything; never delete or overwrite the user's save folders (`Switch2/saves*`, `save-backups`, the apps' `files/saves`). To test the one-time copy, copy the seed into `saves-test/<title ID>` beside a game folder or `.nup` of your own (a new folder, say `Switch2/apptest/`; a `.nup` copies on the phone in seconds) and add that game with `--es game`. Update the seed with `adb push <save folder> /sdcard/Switch2/save-seed/` (the folder is named by the title ID). Saves are private data: never commit them.
 
@@ -160,6 +162,8 @@ adb shell rm /sdcard/Android/data/dev.nxnative.android/files/env.txt     # back 
 The `chmod` is needed: a file `adb shell` writes there belongs to the shell user, readable only by its group, which the app is not in; without it the run goes on with no switches and the log says `[nxlaunch] [RED] env.txt: … exists but cannot be read`. The log lists each switch the host got as `[nxlaunch] env KEY=VALUE`.
 
 `DM_SVC=1` logs the memory SVCs, `DM_THR=1` the thread SVCs, `DM_FS=1` file opens, `DM_NVN_LOG=1` NVN objects, `DM_WATCH_STALL=<s>` dumps every thread when the game stops making progress for that long ([03-bringup.md](../docs/agents/03-bringup.md)).
+
+**A test crash** (test app only): `DM_TEST_CRASH=java` throws an exception on the game's main thread 10 s after the start, `DM_TEST_CRASH=native` faults on a thread of its own; the game's screen goes and the launcher shows "The game stopped unexpectedly" with the cause and Share log ([README, When the game stops unexpectedly](README.md#the-launcher)). The log has `[RED] crash:` lines (java) or `CRASH sig=11` (native); `adb shell run-as dev.nxnative.android cat files/last-exit.txt` shows the record. Remove the line afterwards.
 
 ## Frame capture and replay on the phone
 

@@ -2,6 +2,7 @@ package dev.nxnative.android;
 
 import android.content.Context;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -53,7 +54,7 @@ final class Job {
     static Job create(DumpCheck.Result r, File appPack) throws JSONException {
         JSONObject o = new JSONObject().put("format", FORMAT).put("title_id", r.titleId).put("name", Profile.of(r.titleId) != null ? Profile.of(r.titleId).name : r.titleId).put("version", r.version)
                 .put("dump", r.dump.getPath()).put("work", r.work.getPath()).put("apk", apk()).put("state", "pending").put("reason", "").put("error", "")
-                .put("step", STEPS[0]).put("created", System.currentTimeMillis());
+                .put("step", STEPS[0]).put("created", System.currentTimeMillis()).put("try_anyway", r.untested);
         // the fake engine never writes over a real pack: its pack is a placeholder in ondevice/
         File pack = "fake".equals(BuildConfig.NX_PACK_ENGINE) ? new File(r.work, "ondevice/fake-pack") : appPack;
         o.put("pack", pack.getPath());
@@ -191,10 +192,76 @@ final class Job {
     synchronized void state(String state, String reason, String error) {
         try {
             o.put("state", state).put("reason", reason == null ? "" : reason).put("error", error == null ? "" : error);
+            o.remove("reason_detail");
+            o.remove("go_on");
+            o.remove("error_detail");
+            o.remove("fix");
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }
     }
+
+    /** Failed, with the card's short text, the technical part for Details and what the card offers (PrepareText.Failure) */
+    synchronized void fail(PrepareText.Failure f) {
+        state("failed", null, f.text);
+        try {
+            o.put("error_detail", f.detail).put("fix", f.fix);
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** What a failed job's card offers (PrepareText.FIX_*): an older job, which had no "fix", gets Retry */
+    synchronized String fix() { return o.optString("fix", PrepareText.FIX_RETRY); }
+
+    /** Details of a failed job: the technical part of why (an older job's whole message), and the game, version and folders */
+    synchronized String errorDetail() {
+        String d = "failed".equals(state()) ? PrepareText.failedDetail(error(), o.optString("error_detail"), o.has("fix")) : "";
+        return (d.isEmpty() ? "" : d + "\n\n") + "Game: " + name() + " (" + titleId() + "), " + Profile.versionName(version()) + (tryAnyway() ? ", Try anyway" : "")
+                + "\nDump: " + dump() + "\nPack: " + pack() + "\nWorking files: " + dir() + "\nLogs: " + new File(dir(), "logs");
+    }
+
+    /**
+     * Try anyway (the player's choice, after a warning): a dump of a build the profile does not list is prepared from its newest version, the split's shaders need
+     * not be the profile's list byte for byte (vk_android_build.py still finds each shader by its key), and the library may lack shaders that did not translate
+     */
+    synchronized boolean tryAnyway() { return o.optBoolean("try_anyway", false); }
+
+    synchronized void tryAnyway(boolean on) {
+        try {
+            o.put("try_anyway", on);
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Try anyway: {shaders the dump's game version lacks, shaders to build} from the shaders step (PrepareText.missingShaders), {0, 0} when none */
+    synchronized long[] shadersMissing() {
+        JSONArray a = o.optJSONArray("shaders_missing");
+        return a == null ? new long[] {0, 0} : new long[] {a.optLong(0), a.optLong(1)};
+    }
+
+    synchronized void shadersMissing(long n, long of) {
+        try {
+            o.put("shaders_missing", new JSONArray().put(n).put(of));
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** What the service read when it paused by itself (PackPolicy.readings), and whether Go on anyway lifts this pause; cleared by the next state */
+    synchronized void reasonDetail(String readings, boolean goOn) {
+        try {
+            o.put("reason_detail", readings).put("go_on", goOn);
+        } catch (JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    synchronized String reasonDetail() { return o.optString("reason_detail"); }
+
+    /** A pause Go on anyway lifts: the service's heat pause below CRITICAL (PackPolicy.canOverride) */
+    synchronized boolean canGoOn() { return "paused".equals(state()) && o.optBoolean("go_on", false); }
 
     private JSONObject step(String s) {
         JSONObject steps = o.optJSONObject("steps");
@@ -236,10 +303,24 @@ final class Job {
     /** A step's count from the tool's progress lines */
     synchronized void stepProgress(String s, long done, long total, String stage) {
         try {
-            step0(s).put("done", done).put("total", total).put("stage", stage == null ? "" : stage);
+            JSONObject j = step0(s).put("done", done).put("total", total).put("stage", stage == null ? "" : stage);
+            if (s.equals(STEPS[SHADERS])) j.put("eta", shadersEta(done, total, stage));
         } catch (JSONException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    // The shaders step's speed in this run (the service's Job only; not saved): the first sample of the translate stage, and the time left from the rate since then
+    private long rateT0, rateD0 = -1;
+
+    /** Seconds left for the shaders step from its rate in this run, -1 until there is a rate (15 s and 32 shaders since the first sample) or outside the translate stage */
+    private long shadersEta(long done, long total, String stage) {
+        if (!"translate".equals(stage) || total <= 0) { rateD0 = -1; return -1; }
+        long now = System.nanoTime();
+        if (rateD0 < 0 || done < rateD0) { rateT0 = now; rateD0 = done; return -1; }
+        long n = done - rateD0, ns = now - rateT0;
+        if (n < 32 || ns < 15_000_000_000L) return -1;
+        return Math.max(0, Math.round((total - done) * (ns / 1e9) / n));
     }
 
     private JSONObject step0(String s) throws JSONException {
@@ -257,6 +338,9 @@ final class Job {
     }
 
     /** The step to show: the running one, else the next to run, else the last */
+    /** The step the job is at (or ended at): "rewrite", "shaders", "pack", ... */
+    synchronized String currentStep() { return o.optString("step"); }
+
     synchronized int current() {
         int i = java.util.Arrays.asList(STEPS).indexOf(o.optString("step"));
         int n = next();
@@ -284,6 +368,39 @@ final class Job {
     // the tool's total once it reported one: the shaders it translates (a delta update keeps the others, android/SHADERS.md#delta-updates), else the profile's count
     synchronized long shadersTotal() { long t = stepTotal(SHADERS); Profile p = Profile.of(titleId()); return t > 1 || !step(STEPS[SHADERS]).optString("stage").isEmpty() ? t : p != null ? p.shaderTotal : 0; }
 
+    /** Shaders still to translate */
+    synchronized long shadersLeft() { return Math.max(0, shadersTotal() - shadersDone()); }
+
+    /** Shaders a delta update keeps unchanged from the older library (the profile's count less the tool's total), 0 for a full build or before the tool reports */
+    synchronized long shadersKept() {
+        Profile p = Profile.of(titleId());
+        long t = stepTotal(SHADERS);
+        return p == null || step(STEPS[SHADERS]).optString("stage").isEmpty() || t <= 0 ? 0 : Math.max(0, p.shaderTotal - t);
+    }
+
+    /** Seconds left for the shaders step, -1 while unknown */
+    synchronized long shadersEta() { return "running".equals(state()) ? step(STEPS[SHADERS]).optLong("eta", -1) : -1; }
+
+    /** "about 12 min left", "about 1 h 05 min left", "under a minute left"; "" while unknown */
+    static String etaText(long s) {
+        if (s < 0) return "";
+        if (s < 60) return "under a minute left";
+        long m = (s + 59) / 60;
+        return m < 60 ? "about " + m + " min left" : String.format(Locale.getDefault(), "about %d h %02d min left", m / 60, m % 60);
+    }
+
+    /** "1,234 of 22,782 · 21,548 left · about 35 min left": the status line and the notification */
+    synchronized String shadersCountText() {
+        String eta = etaText(shadersEta());
+        return String.format(Locale.getDefault(), "%,d of %,d · %,d left", shadersDone(), shadersTotal(), shadersLeft()) + (eta.isEmpty() ? "" : " · " + eta);
+    }
+
+    /** The card's line under the bar: "37 % · 21,548 shaders left · about 35 min left · 70 unchanged kept" (the parts it knows) */
+    synchronized String detailText() {
+        boolean during = !"done".equals(stepState(STEPS[SHADERS])) && !step(STEPS[SHADERS]).optString("stage").isEmpty();
+        return PrepareText.progressLine(Math.round(overall() * 100), during, shadersDone(), shadersTotal(), etaText(shadersEta()), shadersKept());
+    }
+
     /** "Translating shaders: 12,345 of 22,852" during the shaders step ("Writing the shader library" at its end), else the step and its count when it has one */
     synchronized String stepText() {
         int i = current();
@@ -291,10 +408,13 @@ final class Job {
             String stage = step(STEPS[i]).optString("stage");
             if (stage.equals("library") || stage.equals("done")) return "Writing the shader library";
             if (stage.equals("check")) return "Checking the shader library";
-            return String.format(Locale.getDefault(), "%s: %,d of %,d", STEP_TEXT[i], shadersDone(), shadersTotal());
+            return STEP_TEXT[i] + ": " + shadersCountText();
         }
         long d = stepDone(i), t = stepTotal(i);
-        return STEP_TEXT[i] + (t > 1 ? String.format(Locale.getDefault(), " %,d / %,d", d, t) : t == 1 || d == 0 ? "" : String.format(Locale.getDefault(), " %,d", d));
+        String part = step(STEPS[i]).optString("stage");   // shader_split.py's "progress: <done>/<total> <n>%" inside a large file
+        // the rewrite's "progress <n> 1000 code" (pack_android.py --in-process: the step's share of each module's rewrite): a percentage, not a count
+        if (part.equals("code") && t > 0) return STEP_TEXT[i] + String.format(Locale.getDefault(), " (%d %%)", Math.min(100, d * 100 / t));
+        return PrepareText.stepCountText(STEP_TEXT[i], STEPS[i].equals("split"), d, t, part);   // the split counts files: "Finding the shaders: 1,203 of 1,890 files"
     }
 
     /** One line for the screen and the notification: what the job is doing or why it stopped */
@@ -303,20 +423,23 @@ final class Job {
         String step = "step " + (current() + 1) + " of " + STEPS.length;
         switch (s) {
             case "done": return "Ready to play.";
-            case "failed": return "Stopped at " + STEP_TEXT[current()].toLowerCase(Locale.ROOT) + ": " + error().replaceAll("[.\\s]+$", "") + ". Tap Retry to go on.";
+            case "failed": return PrepareText.failedText(STEP_TEXT[current()], error(), o.has("fix"));
             case "pending": return "Not started yet.";
-            case "paused": return "Paused: " + reasonText(reason()) + ". " + stepText() + ".";
+            case "paused": return "Paused: " + reasonText(reason()) + ". " + stepText() + "." + (reasonDetail().isEmpty() ? "" : "\n" + capital(reasonDetail()) + ".")
+                    + (canGoOn() && serviceAlive ? "\nIf the phone is not hot, tap Go on anyway." : "");
             case "running": return serviceAlive ? stepText() + " (" + step + ")."
                     : "Interrupted at " + stepText() + ". Tap Resume to go on.";
             default: return s;
         }
     }
 
+    private static String capital(String s) { return s.isEmpty() ? s : s.substring(0, 1).toUpperCase(Locale.ROOT) + s.substring(1); }
+
     static String reasonText(String r) {
         switch (r) {
             case "user": return "by you";
             case "battery": return "battery below 20 %: plug in the charger to go on";
-            case "thermal": return "the phone is too hot: it goes on when it has cooled";
+            case "thermal": return "the phone reports it is too hot: it goes on when it has cooled";
             case "timeout": return "Android's daily limit for background work: open the app and tap Resume";
             case "refused": return "Android did not let it start in the background: open the app and tap Resume";
             case "apk": return "the app was updated with other shader tools: the shaders are translated again";

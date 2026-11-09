@@ -20,6 +20,7 @@ on:
     branches:
       - main
       - android
+      - 'integrate-*'
       - 'android-*'
       - 'custom-*'
     paths:
@@ -101,7 +102,7 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NS2Native-Android-APK
+          name: NS2Droid-Android-APK
           path: |
             android/app/out/*.apk
             android/app/build/outputs/apk/**/*.apk

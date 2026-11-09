@@ -697,6 +697,31 @@ static void window_apply(module_t *m) {
         (unsigned long long)fn[0], (unsigned long long)fn[1], rows[r].w, rows[r].h, was[0], was[1]);
 }
 
+// Switch 2 SDKs (Ounce) compile with APIBKey (pacibsp / autibsp / retab) and APGAKey (pacga), both process-wide on Linux arm64, except in
+// nn::os::detail::FiberImplByHorizon::Initialize (pacia x16, x9; pacia x17, x9) and nn::os::detail::DispatchFiberContext (autiasp), which sign and authenticate
+// a newly initialized fiber's entry with APIAKey. On Android, Bionic's pthread_create resets APIAKey to a fresh random key per thread (PR_PAC_RESET_KEYS), so a
+// fiber initialized on one thread and entered on another faults at autiasp with SIGILL (FPAC, ESR EC 0x1c: The Legend of Zelda: Ocarina of Time's nn.npln.
+// thread, sdk+0x16d40c). Switching those three instructions to APIBKey (pacib / autibsp) keeps the pointer authentication and pacga frame checksum intact across
+// threads
+static void fiber_pac_apply(module_t *m) {
+#if PLAT_ANDROID
+    if (strcmp(m->name, "sdk") || m->nro) return;
+    uint32_t *w = (uint32_t *)m->base; size_t n = m->text_end / 4;
+    for (size_t i = 0; i + 0x90 < n; i++) {
+        if (w[i] != 0xDAC10130u || w[i + 4] != 0xDAC10131u) continue;   // pacia x16, x9; ...; pacia x17, x9
+        for (size_t j = i + 0x40; j < i + 0x100 && j < n; j++) {
+            if (w[j - 3] == 0x9AC233C2u && w[j] == 0xD50323BFu) {        // pacga x2, x30, x2; cmp x2, x1; b.ne; autiasp
+                w[i] = 0xDAC10530u; w[i + 4] = 0xDAC10531u; w[j] = 0xD50323FFu;   // pacib x16, x9; pacib x17, x9; autibsp
+                LOG("sdk: FiberImplByHorizon / DispatchFiberContext switched from APIAKey to APIBKey (sdk+%#zx / +%#zx)", i * 4, j * 4);
+                return;
+            }
+        }
+    }
+#else
+    (void)m;
+#endif
+}
+
 static uint8_t *slurp(const char *path, size_t *n) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) die("open %s", path);
@@ -704,6 +729,34 @@ static uint8_t *slurp(const char *path, size_t *n) {
     uint8_t *p = malloc(st.st_size);
     if (read(fd, p, st.st_size) != st.st_size) die("read %s", path);
     close(fd); *n = st.st_size; return p;
+}
+
+// Pointer authentication, host side. Switch 2 modules return through RETAA/RETAB
+// in every function that has a PAC prologue. On a CPU without FEAT_PAuth
+// (Armv8.2: Cortex-A78/X1 and older, so Snapdragon 888) the HINT forms
+// (PACIBSP/AUTIBSP) run as NOP, so the return address is never signed, but
+// RETAA/RETAB are UNDEFINED and trap. Trapping them would cost a signal round
+// trip per call, so rewrite them here, once, while the text is still writable:
+// RETAB/RETAA become RET, which is exactly what the failed (NOP) signing leaves
+// valid. The cold PAC instructions stay in crash.c's SIGILL path -- the register
+// forms as NOPs, PACGA computed, since it produces a value and has no
+// single-instruction stand-in. Android only: the Apple hosts always have PAuth (crash.c's dm_host_has_pac returns 1 there), and the
+// host unit tests (dm/host/tests, t_nro) compile loader.c without crash.c
+static void pac_patch_text(module_t *m) {
+#if PLAT_ANDROID
+    int dm_host_has_pac(void);   // crash.c
+    if (dm_host_has_pac()) return;   // the CPU signs return addresses for real: RETAB must stay RETAB
+    uint32_t *w = (uint32_t *)m->base;
+    const size_t n = (size_t)(m->text_end / 4);
+    size_t cnt = 0;
+    for (size_t i = 0; i < n; i++) {
+        const uint32_t v = w[i];
+        if (v == 0xD65F0FFFu || v == 0xD65F0BFFu) { w[i] = 0xD65F03C0u; cnt++; }   // RETAB / RETAA -> RET
+    }
+    if (cnt) LOG("%s: %zu RETAB/RETAA returns rewritten to RET (host CPU has no PAC)", m->name, cnt);
+#else
+    (void)m;
+#endif
 }
 
 // Seal the code area immediately after copying into anonymous pages (16 KB pages): [0, text_end) and the patch area are read-only+execute, and from then on any write to the code area crashes on the spot;
@@ -722,7 +775,7 @@ static void map_image(module_t *m, const char *dir) {
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - bl - fl); if (bl) memcpy(m->base + m->back_off, raw + sz - bl, bl);
-        free(raw); install_key_page(m); window_apply(m);
+        free(raw); install_key_page(m); window_apply(m); fiber_pac_apply(m); pac_patch_text(m);
         if (bl && mprotect(m->base + m->back_off, bl, PROT_READ | PROT_EXEC)) die("%s mprotect back patch", m->name);
         uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
         if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
@@ -733,7 +786,7 @@ static void map_image(module_t *m, const char *dir) {
     m->size = (sz + 0x3FFF) & ~0x3FFFull;
     m->base = mmap(NULL, m->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (m->base == MAP_FAILED) die("%s mmap", m->name);
-    memcpy(m->base, raw, sz); free(raw); install_key_page(m); window_apply(m);
+    memcpy(m->base, raw, sz); free(raw); install_key_page(m); window_apply(m); fiber_pac_apply(m); pac_patch_text(m);
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;

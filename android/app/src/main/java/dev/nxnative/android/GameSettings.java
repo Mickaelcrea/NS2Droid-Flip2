@@ -10,7 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * A game's own settings (its Manage sheet › Game settings…): resolution, frame rate cap, GPU driver, GPU timing and extra environment lines, stored per title ID (Prefs.gameKey,
+ * A game's own settings (its Manage sheet › Game settings…): resolution, frame rate cap, GPU driver, GPU timing, language and extra environment lines, stored per title ID (Prefs.gameKey,
  * GpuDriver.choice). Each starts as "Default", which follows the main screen's Settings (global); a value set here wins for this game only. The in-game panel's frame
  * rate cap is this game's too. GameActivity reads them at start.
  */
@@ -24,6 +24,10 @@ final class GameSettings {
         Runnable again = () -> { d[0].dismiss(); dialog(a, g); };
         String id = g.titleId;
         box.addView(Ui.small(a, "For this game only, from its next start. Default follows Settings."));
+        Ui.add(box, new Ui.Setting(a, "↩️", "Reset to defaults", v -> new AlertDialog.Builder(a).setTitle("Reset to defaults · " + g.name)
+                .setMessage("The game will follow global settings. Extra environment lines are kept.")
+                .setPositiveButton("Reset", (x, w) -> { Prefs.resetGame(a, id); again.run(); }).setNegativeButton("Cancel", null).show())
+                .value("The game will follow global settings.").chevron(a).view, 8);
         Profile prof = Profile.of(id);
         if (prof != null && prof.hasResolution())   // only where it does something: a profile with window_fn or graphics_scale rows
             Ui.add(box, new Ui.Setting(a, "🖼️", "Game resolution", v -> resolution(a, g, again)).value(windowLabel(a, id)).chevron(a).view, 8);
@@ -33,15 +37,38 @@ final class GameSettings {
             fixed.view.setAlpha(0.6f);
             Ui.add(box, fixed.view, 0);
         } else Ui.add(box, new Ui.Setting(a, "⏱️", "Frame rate cap", v -> cap(a, g, again)).value(capLabel(a, id)).chevron(a).view, 0);
+        Ui.add(box, new Ui.Setting(a, "📐", "Display", v -> display(a, g, again)).value(Prefs.DISPLAY_NAMES[Prefs.stretch(a, id) ? 1 : 0]).chevron(a).view, 0);
+        Ui.add(box, new Ui.Setting(a, "🔍", "Upscaler", v -> upscaler(a, g, again)).value(dflt(GameUpscaler.ownMode(a, id), GameUpscaler.MODES[GameUpscaler.mode(a, id)])).chevron(a).view, 0);
+        if (GameUpscaler.mode(a, id) == GameUpscaler.MODE_FSR)   // only with FSR 1 chosen
+            Ui.add(box, new Ui.Setting(a, "✨", "FSR sharpness", v -> sharpness(a, g, again)).value(dflt(GameUpscaler.ownSharp(a, id), GameUpscaler.sharpName(a, id))).chevron(a).view, 0);
+        if (Prefs.drsGame(id))
+            Ui.add(box, new Ui.Setting(a, "📐", "Dynamic resolution", v -> drs(a, g, again)).value(dflt(Prefs.ownDrs(a, id), Prefs.DRS_NAMES[Prefs.drs(a, id)])).chevron(a).view, 0);
         Ui.add(box, new Ui.Setting(a, "🎮", "GPU driver", v -> driver(a, g, again)).value(driverLabel(a, id)).chevron(a).view, 0);
         Ui.add(box, new Ui.Setting(a, "⏲️", "GPU timing", v -> gpuTiming(a, g, again)).value(gpuTsLabel(a, id)).chevron(a).view, 0);
+        Ui.add(box, new Ui.Setting(a, "🌐", "Game language", v -> language(a, g, again)).value(GameLanguage.label(Prefs.gameLang(a, id), phoneTag())).chevron(a).view, 0);
+        // Speed-ups that pay off most on Qualcomm's driver (fewer draws for the GPU, less CPU a render pass); off by default (with either on, a tester lost the GPU on Adreno 830
+        // with Turnip in 1-2 of 5 starts: open), each one can be turned on alone
+        Ui.Setting inst = new Ui.Setting(a, "🧩", "Instanced draws", null).toggle(a, Prefs.instancedDraws(a, id), (b, on) -> Prefs.instancedDraws(a, id, on));
+        inst.value("Draws that repeat one mesh become one instanced draw (fewer draws for the GPU)");
+        Ui.add(box, inst.view, 0);
+        Ui.Setting crp = new Ui.Setting(a, "🧱", "Classic render passes", null).toggle(a, Prefs.classicPasses(a, id), (b, on) -> Prefs.classicPasses(a, id, on));
+        crp.value("Render passes instead of dynamic rendering (less CPU a pass on Qualcomm's driver)");
+        Ui.add(box, crp.view, 0);
+        Ui.Setting pso = new Ui.Setting(a, "🧵", "Background pipelines", null).toggle(a, Prefs.psoAsync(a, id), (b, on) -> Prefs.psoAsync(a, id, on));
+        pso.value("New pipelines are made in the background: a short pop-in instead of a stutter the first time something is drawn");
+        Ui.add(box, pso.view, 0);
         Ui.Setting ret = new Ui.Setting(a, "⏸️", "Pause on return", null).toggle(a, Prefs.pauseOnReturn(a, id), (b, on) -> Prefs.pauseOnReturn(a, id, on));
         ret.value("Coming back from the background, the game waits paused for a tap");
         Ui.add(box, ret.view, 0);
-        Ui.Setting lr = new Ui.Setting(a, "🧠", "Low RAM mode", null)
-                .toggle(a, Prefs.gameLowRam(a, id), (b, on) -> Prefs.gameLowRam(a, id, on));
-        lr.value(Prefs.ownLowRam(a, id) ? (Prefs.gameLowRam(a, id) ? "On" : "Off") : "Default · " + (Prefs.lowRam(a) ? "On" : "Off"));
-        Ui.add(box, lr.view, 0);
+        Ui.Setting rum = new Ui.Setting(a, "📳", "Rumble", null).toggle(a, Prefs.rumble(a, id), (b, on) -> Prefs.rumble(a, id, on));
+        rum.value("On the controller, or the phone without one");
+        Ui.add(box, rum.view, 0);
+        Ui.Setting fast = new Ui.Setting(a, "🚀", "Use fast cores", null).toggle(a, Prefs.pinThreads(a, id), (b, on) -> Prefs.pinThreads(a, id, on));
+        fast.value("Keeps the busiest threads off the small cores");
+        Ui.add(box, fast.view, 0);
+        Ui.add(box, new Ui.Setting(a, "🅰️", "Xbox button label swap", v -> xbox(a, g, again))
+                .value((Prefs.ownXboxButtons(a, id) ? "" : "Default · ") + Prefs.xboxLabel(Prefs.xboxButtons(a, id))).chevron(a).view, 0);
+        Ui.add(box, new Ui.Setting(a, "🕹️", "Button mapping", v -> PadMapUi.forGame(a, g, again)).value(PadMapUi.label(a, id)).chevron(a).view, 0);
         String env = Prefs.gameEnv(a, id);
         Ui.add(box, new Ui.Setting(a, "🧪", "Extra environment", v -> env(a, g, again))
                 .value(env.isEmpty() ? "None (KEY=VALUE lines for the host, after env.txt)" : env.split("\n").length + " line(s): " + env.replace('\n', ' ')).chevron(a).view, 0);
@@ -55,7 +82,7 @@ final class GameSettings {
     }
 
     static String capLabel(MainActivity a, String id) {
-        String l = MainActivity.capLabel(Prefs.fpsCap(a, id));
+        String l = Prefs.paced(id) ? Prefs.paceLabel(Prefs.paceCap(a, id)) : MainActivity.capLabel(Prefs.fpsCap(a, id));
         return Prefs.ownFpsCap(a, id) ? l : "Default · " + l;
     }
 
@@ -107,53 +134,81 @@ final class GameSettings {
         d[0] = Ui.sheet(a, "GPU timing · " + g.name, box).setNegativeButton("Cancel", null).show();
     }
 
+    static String phoneTag() { return java.util.Locale.getDefault().toLanguageTag(); }
+
+    /** Game language (DM_LANG, GameLanguage): the phone's language first (the default), then the console's languages; a game without the one picked uses one it has */
+    static void language(android.app.Activity a, Game g, Runnable done) {   // the in-game panel's shortcut too
+        String[] labels = new String[GameLanguage.CODES.length + 1];
+        labels[0] = GameLanguage.label(null, phoneTag());
+        System.arraycopy(GameLanguage.NAMES, 0, labels, 1, GameLanguage.NAMES.length);
+        String m = Prefs.gameLang(a, g.titleId);
+        int checked = m == null ? 0 : 1 + Math.max(0, Arrays.asList(GameLanguage.CODES).indexOf(m));
+        new AlertDialog.Builder(a).setTitle("Game language · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
+            Prefs.gameLang(a, g.titleId, w == 0 ? null : GameLanguage.CODES[w - 1]);
+            x.dismiss();
+            done.run();
+        }).setNegativeButton("Cancel", null).show();
+    }
+
     private static void resolution(MainActivity a, Game g, Runnable done) {
-        int n = Prefs.WINDOWS.length;
-        String[] labels = new String[n + 2];
+        String[] labels = new String[Prefs.WINDOWS.length + 1];
         labels[0] = "Default (" + Prefs.windowName(Prefs.defaultWindow(a, g.titleId), false) + ")";
-        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 1, n);
-        boolean own = Prefs.ownWindow(a, g.titleId);
-        String cur = own ? Prefs.gameWindow(a, g.titleId) : null;
-        labels[n + 1] = own && Prefs.isCustomWindow(cur) ? "Custom (" + cur + ")" : "Custom";
-        int checked = 0;
-        if (own && cur != null) {
-            int idx = Arrays.asList(Prefs.WINDOWS).indexOf(cur);
-            if (idx >= 0) checked = 1 + idx;
-            else if (Prefs.isCustomWindow(cur)) checked = 1 + n;
-        }
+        System.arraycopy(Prefs.WINDOW_NAMES, 0, labels, 1, Prefs.WINDOW_NAMES.length);
+        int checked = Prefs.ownWindow(a, g.titleId) ? 1 + Math.max(0, Arrays.asList(Prefs.WINDOWS).indexOf(Prefs.gameWindow(a, g.titleId))) : 0;
         new AlertDialog.Builder(a).setTitle("Game resolution · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-            if (w == 0) {
-                Prefs.gameWindow(a, g.titleId, null);
-                x.dismiss();
-                done.run();
-            } else if (w <= n) {
-                Prefs.gameWindow(a, g.titleId, Prefs.WINDOWS[w - 1]);
-                x.dismiss();
-                done.run();
-            } else {
-                x.dismiss();
-                String init = own && Prefs.isCustomWindow(cur) ? cur : Prefs.defaultWindow(a, g.titleId);
-                MainActivity.promptCustomResolution(a, init, res -> {
-                    Prefs.gameWindow(a, g.titleId, res);
-                    done.run();
-                });
-            }
+            Prefs.gameWindow(a, g.titleId, w == 0 ? null : Prefs.WINDOWS[w - 1]);
+            x.dismiss();
+            done.run();
+        }).setNegativeButton("Cancel", null).show();
+    }
+
+    /** Display: Fit keeps the game's 16:9 picture with bars on a screen of another shape; Stretch fills the screen (DM_VK_STRETCH), the touch mapping with it */
+    private static void display(MainActivity a, Game g, Runnable done) {
+        new AlertDialog.Builder(a).setTitle("Display · " + g.name).setSingleChoiceItems(Prefs.DISPLAY_NAMES, Prefs.stretch(a, g.titleId) ? 1 : 0, (x, w) -> {
+            Prefs.stretch(a, g.titleId, w == 1);
+            x.dismiss();
+            done.run();
+        }).setNegativeButton("Cancel", null).show();
+    }
+
+    private static void xbox(MainActivity a, Game g, Runnable done) {   // Default first: the game follows Settings again
+        String[] labels = new String[Prefs.XBOX_NAMES.length + 1];
+        labels[0] = "Default (Settings: " + Prefs.xboxLabel(Prefs.xboxButtons(a)) + ")";
+        System.arraycopy(Prefs.XBOX_NAMES, 0, labels, 1, Prefs.XBOX_NAMES.length);
+        int checked = Prefs.ownXboxButtons(a, g.titleId) ? Prefs.xboxButtons(a, g.titleId) + 1 : 0;
+        new AlertDialog.Builder(a).setTitle("Xbox button label swap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
+            Prefs.xboxButtons(a, g.titleId, w == 0 ? null : w - 1);
+            x.dismiss();
+            done.run();
         }).setNegativeButton("Cancel", null).show();
     }
 
     private static void cap(MainActivity a, Game g, Runnable done) {
+        if (Prefs.paced(g.titleId)) {   // a frame limit, no locking (Prefs.PACE_CAPS)
+            String[] labels = new String[Prefs.PACE_CAPS.length + 1];
+            labels[0] = "Default (Settings: " + Prefs.paceLabel(Prefs.paceOf(Prefs.fpsCap(a))) + ")";
+            int checked = 0, cur = Prefs.paceCap(a, g.titleId);
+            for (int k = 0; k < Prefs.PACE_CAPS.length; k++) { labels[k + 1] = Prefs.paceLabel(Prefs.PACE_CAPS[k]); if (Prefs.ownFpsCap(a, g.titleId) && Prefs.PACE_CAPS[k] == cur) checked = k + 1; }
+            new AlertDialog.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
+                Prefs.fpsCap(a, g.titleId, w == 0 ? null : Prefs.PACE_CAPS[w - 1]);
+                x.dismiss(); done.run();
+            }).setNegativeButton("Cancel", null).show();
+            return;
+        }
         int n = Prefs.FPS_CAPS.length;
-        String[] labels = new String[n + 1];
+        String[] labels = new String[n + 2];
         labels[0] = "Default (Settings: " + MainActivity.capLabel(Prefs.fpsCap(a)) + ")";
+        labels[1] = MainActivity.capLabel(-1);
         int checked = 0;
         boolean own = Prefs.ownFpsCap(a, g.titleId);
         int cur = Prefs.fpsCap(a, g.titleId);
+        if (own && cur < 0) checked = 1;
         for (int k = 0; k < n; k++) {
-            labels[k + 1] = MainActivity.capLabel(Prefs.FPS_CAPS[k]);
-            if (own && Prefs.FPS_CAPS[k] == cur) checked = k + 1;
+            labels[k + 2] = MainActivity.capLabel(Prefs.FPS_CAPS[k]);
+            if (own && Prefs.FPS_CAPS[k] == cur) checked = k + 2;
         }
         new AlertDialog.Builder(a).setTitle("Frame rate cap · " + g.name).setSingleChoiceItems(labels, checked, (x, w) -> {
-            Prefs.fpsCap(a, g.titleId, w == 0 ? null : Prefs.FPS_CAPS[w - 1]);
+            Prefs.fpsCap(a, g.titleId, w == 0 ? null : w == 1 ? -1 : Prefs.FPS_CAPS[w - 2]);
             x.dismiss();
             done.run();
         }).setNegativeButton("Cancel", null).show();
@@ -192,5 +247,30 @@ final class GameSettings {
         Ui.add(box, t, 8);
         Ui.sheet(a, "Extra environment · " + g.name, box).setPositiveButton("Save", (x, w) -> { Prefs.gameEnv(a, g.titleId, t.getText().toString()); done.run(); })
                 .setNeutralButton("Clear", (x, w) -> { Prefs.gameEnv(a, g.titleId, null); done.run(); }).setNegativeButton("Cancel", null).show();
+    }
+
+    static String dflt(boolean own, String v) { return own ? v : "Default · " + v; }
+
+    /** A choice with "Default (Settings: ...)" first: picking it removes the game's own value (set(null)) */
+    private static void choose(MainActivity a, String title, String[] items, String settingsValue, boolean own, int cur, java.util.function.Consumer<Integer> set, Runnable done) {
+        String[] labels = new String[items.length + 1];
+        labels[0] = "Default (Settings: " + settingsValue + ")";
+        System.arraycopy(items, 0, labels, 1, items.length);
+        new AlertDialog.Builder(a).setTitle(title).setSingleChoiceItems(labels, own ? cur + 1 : 0, (x, w) -> { set.accept(w == 0 ? null : w - 1); x.dismiss(); done.run(); })
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private static void upscaler(MainActivity a, Game g, Runnable done) {   // the Upscaler (GameUpscaler: DM_VK_NDSR and the present's scaling); the in-game panel changes it live
+        choose(a, "Upscaler · " + g.name, GameUpscaler.MODES, GameUpscaler.MODES[GameUpscaler.mode(a)], GameUpscaler.ownMode(a, g.titleId), GameUpscaler.mode(a, g.titleId),
+               v -> GameUpscaler.mode(a, g.titleId, v), done);
+    }
+
+    private static void sharpness(MainActivity a, Game g, Runnable done) {   // FSR's RCAS sharpening (GameUpscaler, DM_VK_NDSR_SHARP)
+        choose(a, "FSR sharpness · " + g.name, GameUpscaler.SHARP_NAMES, GameUpscaler.sharpName(GameUpscaler.sharp(a)), GameUpscaler.ownSharp(a, g.titleId),
+               GameUpscaler.sharpIndex(GameUpscaler.sharp(a, g.titleId)), v -> GameUpscaler.sharp(a, g.titleId, v == null ? null : GameUpscaler.SHARPS[v]), done);
+    }
+
+    private static void drs(MainActivity a, Game g, Runnable done) {   // the render size's range (Prefs.DRS), from the next start; the in-game panel changes it live
+        DrsSlider.dialog(a, " · " + g.name, Prefs.drs(a, g.titleId), Prefs.DRS_NAMES[Prefs.drs(a)], Prefs.ownDrs(a, g.titleId), v -> Prefs.drs(a, g.titleId, v), done);
     }
 }

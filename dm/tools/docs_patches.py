@@ -19,7 +19,7 @@ HOST_EXT = ('.c', '.m', '.mm', '.h', '.swift')
 # What a build-keyed host table does (the table's name in the source; a row of another table is listed under its own name)
 TABLES = {'k_locks': 'engine frame limit set to fps_target', 'k_ue': "Unreal's allocator on a host malloc zone", 'k_nier_dr': 'frame interval and dynamic-resolution floor'}
 # Profile keys that are not behaviour switches: per-game data or controls, not something the host does differently
-NOT_SWITCHES = {'pad_layout', 'depth_mode', 'mem_used', 'sys_resource', 'fastboot_env'}   # fastboot_env: a test-run preset (DM_FASTBOOT), not a change to how the game runs
+NOT_SWITCHES = {'pad_layout', 'depth_mode', 'mem_used', 'sys_resource', 'fastboot_env', 'romfs_substitute'}   # fastboot_env: a test-run preset (DM_FASTBOOT), not a change to how the game runs
 
 # ---- Binding: what a patch's correctness is anchored to, from the loosest (GitHub issue #635). A patch is at its goal when its binding is the loosest it could have; the gap between the two
 # is the work list. A patch file's BINDING is a list of {'what', 'now', 'goal', 'purpose', 'why'} with an optional 'blocked' (why the gap cannot close yet) or 'kept' (why it stays
@@ -97,6 +97,7 @@ SWITCH_BINDING = [
     ('render_cond', '', {'what': 'NVN conditional rendering', 'now': 'game', 'goal': 'host', 'purpose': 'rendering',
      'why': f'what the GPU does; off by default only because other games drew everything before: {DEFAULT_SOON}'}),
     ('gpu_timestamps', '', {'what': 'timestamp reports per segment', 'now': 'game', 'goal': 'host', 'purpose': 'rendering', 'why': f'what hardware records: {DEFAULT_SOON}'}),
+    ('draw_barriers', '', {'what': 'draw passes ordered by the game\'s own barriers', 'now': 'game', 'goal': 'host', 'purpose': 'frame rate', 'why': f'what NVN specifies: {DEFAULT_SOON}'}),
     ('android_window', '', {'what': "the Android launcher's default Game resolution", 'now': 'game', 'goal': 'host', 'purpose': 'frame rate',
      'why': "a workaround while the game's upscaler is too slow on Adreno with Turnip at 1080p: the faster upscaler makes it unneeded"}),
     ('mem_map_limit', '', {'what': 'MapPhysicalMemory limited to the application pool', 'now': 'game', 'goal': 'host', 'purpose': 'memory',
@@ -130,6 +131,10 @@ SWITCH_BINDING = [
     ('perf_mode', '', {'what': 'Boost whatever the operation mode', 'now': 'game', 'goal': 'game', 'purpose': 'runtime', 'why': 'a combination a Switch 1 never reports: a choice per game'}),
     ('window_fn', '', {'what': "the window size's two getter functions, set at load (DM_WINDOW_SIZE, the Android launcher's Game resolution)", 'now': 'build', 'goal': 'game', 'purpose': 'rendering',
      'why': "the game's own constant window size, at fixed offsets per main build; a function fingerprint (two leaf functions returning the size, found from their callers) could carry it over the game's updates"}),
+    ('fps_decouple', '', {'what': "the frame-rate controller's 60 / interval switched to the measured frame rate, while presentation follows the host's tick (the Android launcher's frame limit)", 'now': 'build', 'goal': 'engine', 'purpose': 'frame rate',
+     'why': "one sdiv in sead's dynamic interval controller, at a fixed offset per main build; a fingerprint of the controller (the sdiv after the interval load, found from the floor row's object) could find it in other sead games"}),
+    ('drs_ctl', '', {'what': "the dynamic resolution's range steered while the game runs (DM_DRS, the Android launcher's Dynamic resolution)", 'now': 'build', 'goal': 'engine', 'purpose': 'rendering',
+     'why': "four places in sead / agl's MaintainGpuPercentage controller, at fixed offsets per main build (each checked for its instruction); a fingerprint of the controller could find them in other games on that engine"}),
     ('res_levels', '', {'what': "the dynamic resolution's level lists, lowered at load to fit DM_WINDOW_SIZE (the Android launcher's Game resolution)", 'now': 'build', 'goal': 'engine', 'purpose': 'rendering',
      'why': "KTGL's size table and level lists, at fixed offsets per main build; a fingerprint of the controller that picks the list (oe::GetOperationMode, oe::GetCurrentGraphicsScale, the 34-level table) could find them in other KTGL games"}),
     ('graphics_scale', '', {'what': "the Switch 2 graphics scale and operation mode for each Game resolution choice (DM_GRAPHICS_SCALE, DM_OPMODE; the Android launcher)", 'now': 'game', 'goal': 'game', 'purpose': 'rendering',

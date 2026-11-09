@@ -24,7 +24,7 @@
 # unfinished: the launcher refuses it, the next run rewrites it). Libraries of other versions in the pack's shaders/ are kept.
 # --code-only rewrites the modules and stops (pack.tsv, game.tsv and the shaders untouched); --keep-code packs without rewriting (the phone's two steps).
 # Usage: pack_android.py <game folder | .nup file> [--version N] [--out DIR] [-j N] [--shader-cache DIR] [--shader-pkg DIR] [--shader-python PY] [-J N] [--no-shaders] [--code-only | --keep-code] [--in-process]   (exit 1 on error)
-import argparse, hashlib, os, runpy, shutil, subprocess, sys, time
+import argparse, hashlib, os, runpy, shutil, signal, subprocess, sys, time
 from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'scripts')); sys.path.insert(0, str(REPO / 'dm/games'))
@@ -38,6 +38,54 @@ FORMAT = 1   # pack.tsv format; the launcher refuses another
 
 
 class Error(Exception): pass
+
+
+WINDOWS = os.name == 'nt'
+
+
+def write_lf(path, text):   # a text file with '\n' line ends in UTF-8 on every system (Windows' text mode writes CR LF in its ANSI code page): the launcher reads these bytes
+    with open(path, 'w', encoding='utf-8', newline='\n') as f: f.write(text)
+
+
+def child_env(**kw):
+    """The environment of a tool this script starts: this one's and kw; on Windows also PYTHONUTF8=1, so a Python tool's text, its files and its output to the log or
+    to this script's output, is UTF-8 there too (the ANSI code page has no '→' and stops the tool), and the environment's Library\\bin first on PATH (a conda
+    environment keeps its programs there, spirv-val among them, and they are on PATH only when it is activated)"""
+    if not WINDOWS: return dict(os.environ, **kw)
+    env = dict(os.environ, PYTHONUTF8='1')
+    lib = os.path.join(sys.prefix, 'Library', 'bin')
+    if os.path.isdir(lib): env['PATH'] = lib + os.pathsep + env.get('PATH', '')
+    return dict(env, **kw)
+
+
+def windows_job():
+    """Windows: this process and every process it starts from here on (the rewriter, the split, the shader build with its translator and spirv-val) in one job that
+    the system ends as a whole when this process ends, however it ends. A GUI's stop is then Popen.terminate() on this process alone (TerminateProcess, which runs
+    no finally: without the job its tools would go on). A pack stopped at any point is safe: each module is swapped in whole, its key last, and every other file goes
+    in by rename. Best effort: where the job cannot be made, the tools are stopped as before (the finally of rewrite, subprocess.run on KeyboardInterrupt)"""
+    import ctypes
+    from ctypes import wintypes
+    class Basic(ctypes.Structure):   # JOBOBJECT_BASIC_LIMIT_INFORMATION
+        _fields_ = [('PerProcessUserTimeLimit', ctypes.c_int64), ('PerJobUserTimeLimit', ctypes.c_int64), ('LimitFlags', wintypes.DWORD), ('MinimumWorkingSetSize', ctypes.c_size_t),
+                    ('MaximumWorkingSetSize', ctypes.c_size_t), ('ActiveProcessLimit', wintypes.DWORD), ('Affinity', ctypes.c_size_t), ('PriorityClass', wintypes.DWORD), ('SchedulingClass', wintypes.DWORD)]
+    class Extended(ctypes.Structure):   # JOBOBJECT_EXTENDED_LIMIT_INFORMATION (its IO_COUNTERS as six 64-bit counts)
+        _fields_ = [('Basic', Basic), ('Io', ctypes.c_uint64 * 6), ('ProcessMemoryLimit', ctypes.c_size_t), ('JobMemoryLimit', ctypes.c_size_t),
+                    ('PeakProcessMemoryUsed', ctypes.c_size_t), ('PeakJobMemoryUsed', ctypes.c_size_t)]
+    try:
+        k = ctypes.WinDLL('kernel32', use_last_error=True)
+        k.CreateJobObjectW.restype, k.CreateJobObjectW.argtypes = wintypes.HANDLE, [ctypes.c_void_p, wintypes.LPCWSTR]
+        k.SetInformationJobObject.restype, k.SetInformationJobObject.argtypes = wintypes.BOOL, [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        k.AssignProcessToJobObject.restype, k.AssignProcessToJobObject.argtypes = wintypes.BOOL, [wintypes.HANDLE, wintypes.HANDLE]
+        k.GetCurrentProcess.restype = wintypes.HANDLE
+        job = k.CreateJobObjectW(None, None)   # not inheritable: this process holds the only handle, which closes when it ends
+        info = Extended(); info.Basic.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not job or not k.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) or not k.AssignProcessToJobObject(job, k.GetCurrentProcess()):   # 9: JobObjectExtendedLimitInformation
+            print(f'the tools this packer starts are not in a job (Windows error {ctypes.get_last_error()}): a stop by TerminateProcess leaves them running', flush=True)
+            return None
+        return job   # kept open for this process's life
+    except (OSError, AttributeError) as e:
+        print(f'the tools this packer starts are not in a job ({e})', flush=True)
+        return None
 
 
 # The rewrite key, <module>.android.key: SHA-256 over name\0bytes of the REWRITER files, the module, the profile's patches.py (when there is one) and the part of the
@@ -118,8 +166,13 @@ def upgrade_keys(srcs, out, g):
         if not kf.is_file(): continue
         have, keys = kf.read_text().strip(), rewrite_keys(src, g, out)
         if have in keys and have != keys[0]:
-            tmp = out / f'{m}.android.key.tmp'; tmp.write_text(keys[0] + '\n'); os.replace(tmp, kf)
+            tmp = out / f'{m}.android.key.tmp'; write_lf(tmp, keys[0] + '\n'); os.replace(tmp, kf)
             print(f'  {m}: key brought to the current formula (same rewrite)')
+
+
+def nso_text_size(path):   # the module's code segment, decompressed (NSO header +0x18): what the rewriter's time follows
+    with open(path, 'rb') as f: b = f.read(0x20)
+    return int.from_bytes(b[0x18:0x1C], 'little') if b[:4] == b'NSO0' else 0
 
 
 def nso_build_id(path):   # the module's build ID (NSO header +0x40), as the profile's build rows name it
@@ -128,13 +181,36 @@ def nso_build_id(path):   # the module's build ID (NSO header +0x40), as the pro
     return b[0x40:0x50].hex()
 
 
-def run_in_process(script, args, env, log):
+def nso_zbic(path):   # whether the module's segments are ZBIC (NSO flag bit 7, system 22.0.0 on), which nso.py needs a decoder for (nso.zbic_decoder)
+    b = path.read_bytes()[:0x10]   # read_bytes: a module inside a .nup is a path of its own kind, as in nso_build_id
+    return b[:4] == b'NSO0' and bool(int.from_bytes(b[0xc:0x10], 'little') & 0x80)
+
+
+class ProgressTee:
+    """A tool's output stream in run_in_process: everything to the file f; its "progress <done> <total> ..." lines also to out (this script's own output, the
+    step log Prepare reads), as "progress <n> 1000 code" with the tool's fraction placed in [base, base + width) of the step's 1000"""
+    def __init__(self, f, out, base, width): self.f, self.out, self.base, self.width, self.part = f, out, base, width, ''
+    def write(self, s):
+        self.f.write(s)
+        self.part += s
+        while '\n' in self.part:
+            line, self.part = self.part.split('\n', 1)
+            w = line.split()
+            if len(w) >= 3 and w[0] == 'progress' and w[1].isdigit() and w[2].isdigit() and int(w[2]):
+                print(f'progress {self.base + self.width * min(int(w[1]), int(w[2])) // int(w[2])} 1000 code', file=self.out, flush=True)
+        return len(s)
+    def flush(self): self.f.flush()
+    def isatty(self): return False
+
+
+def run_in_process(script, args, env, log, progress=None):
     """script run as `python3 script args` would run it, in this process: its sys.argv, env added to os.environ, stdout and stderr to the file log;
-    everything put back after it (the modules it imported from outside the standard library are dropped, so the next run starts afresh). → its exit code"""
+    everything put back after it (the modules it imported from outside the standard library are dropped, so the next run starts afresh). → its exit code.
+    progress: (base, width) to pass the tool's progress lines on to this script's output (ProgressTee)"""
     saved = (sys.argv, list(sys.path), dict(os.environ), set(sys.modules), sys.stdout, sys.stderr, os.getcwd())
     code = 0
     with open(log, 'w', buffering=1, encoding='utf-8', errors='backslashreplace') as f:
-        sys.stdout = sys.stderr = f
+        sys.stdout = sys.stderr = ProgressTee(f, saved[4], *progress) if progress else f
         try:
             os.environ.update(env); sys.argv = [str(script)] + [str(a) for a in args]; sys.path.insert(0, str(Path(script).parent))
             runpy.run_path(str(script), run_name='__main__')
@@ -165,7 +241,7 @@ def swap_in(out, m, key):
     st = staging(out, m)
     for f in sorted(st.iterdir()): os.replace(f, out / f.name)
     st.rmdir()
-    tmp = out / f'{m}.android.key.tmp'; tmp.write_text(key + '\n'); os.replace(tmp, out / f'{m}.android.key')
+    tmp = out / f'{m}.android.key.tmp'; write_lf(tmp, key + '\n'); os.replace(tmp, out / f'{m}.android.key')
 
 
 def rewriter_src(src, out, m):
@@ -181,27 +257,35 @@ def rewrite(py, srcs, out, jobs, g, in_process=False):
     """patch_nso.py --target android on each module into out (each its own <module>.* files); a module whose key file matches is kept. Each module is
     rewritten into a staging folder and swapped in when it is complete (swap_in), so a run stopped part way never leaves new code with old tables.
     in_process: each in this process (run_in_process) with one worker, one module after the other"""
-    env = dict(os.environ, DM_GAME=g.id, DM_REWRITE_J=str(max(1, (os.cpu_count() or 4) // max(1, len(srcs)))))
+    env = child_env(DM_GAME=g.id, DM_REWRITE_J=str(max(1, (os.cpu_count() or 4) // max(1, len(srcs)))))
     todo = {}
     for m, src in srcs.items():
         keys = rewrite_keys(src, g, out); key = keys[0]; kf = out / f'{m}.android.key'
         if (out / f'{m}.patched.bin').is_file() and kf.is_file() and (have := kf.read_text().strip()) in keys:   # the current rewriter's key, an equivalent one's (EQUIV), an earlier formula's
-            if have != key: tmp = out / f'{m}.android.key.tmp'; tmp.write_text(key + '\n'); os.replace(tmp, kf)   # the same rewrite: its key as rewrite_key's (upgrade_keys)
+            if have != key: tmp = out / f'{m}.android.key.tmp'; write_lf(tmp, key + '\n'); os.replace(tmp, kf)   # the same rewrite: its key as rewrite_key's (upgrade_keys)
             print(f'  {m}: unchanged, kept'); continue
         todo[m] = (src, key)
     for m in todo: (out / f'{m}.android.key').unlink(missing_ok=True)   # every module to rewrite is unfinished from here on: no mix of old and new modules passes
     if in_process:
+        # Prepare's bar (the phone's rewrite step): each module a share of the step's 1000 by the size of its code, the rewriter's progress lines placed in it
+        files = {m: rewriter_src(src, out, m) for m, (src, key) in todo.items()}
+        size = {m: max(1, nso_text_size(f)) for m, f in files.items()}
+        base, total = 0, sum(size.values())
+        if todo: print('progress 0 1000 code', flush=True)
         for m, (src, key) in todo.items():
             kf = out / f'{m}.android.key'; kf.unlink(missing_ok=True)
             shutil.rmtree(staging(out, m), ignore_errors=True)
             print(f'  {m}: rewriting {src} (in process)', flush=True)
             t0 = time.monotonic()
-            rc = run_in_process(REPO / 'dm/tools/patch_nso.py', [str(rewriter_src(src, out, m)), staging(out, m), m, '--target', 'android'], {'DM_GAME': g.id, 'DM_REWRITE_J': '1'}, out / f'rewrite_{m}.log')
+            width = 1000 * size[m] // total
+            rc = run_in_process(REPO / 'dm/tools/patch_nso.py', [str(files[m]), staging(out, m), m, '--target', 'android'], {'DM_GAME': g.id, 'DM_REWRITE_J': '1'}, out / f'rewrite_{m}.log', (base, width))
             if rc:
                 tail = (out / f'rewrite_{m}.log').read_text(errors='replace').splitlines()[-20:]
                 raise Error(f'patch_nso.py exit code {rc} on {m}:\n' + '\n'.join(tail))
             swap_in(out, m, key)
+            base += width
             print(f'  {m}: done ({time.monotonic() - t0:.1f} s)', flush=True)
+        if todo: print('progress 1000 1000 code', flush=True)
         return
     procs = {}
     try:
@@ -229,6 +313,7 @@ def rewrite(py, srcs, out, jobs, g, in_process=False):
 
 
 VK_BUILD = REPO / 'dm/gfx/tools/vk_android_build.py'
+VK_BUILD_WIN = REPO / 'dm/gfx/tools/vk_android_win.py'   # vk_android_build.py with what Windows needs put around it (that file's header)
 SPLIT = REPO / 'dm/gfx/tools/shader_split.py'
 VK_LIB, VK_PREFIX = 'dmsh_vk.lib', 'v-'   # dmsh_abi_vk.h DMSH_VK_LIB_FILE / DMSH_VK_DIR_PREFIX
 
@@ -242,7 +327,10 @@ def vk_chain():   # DMSH_VK_CHAIN of this source tree, as the host is compiled w
 
 def shader_python(want, split=False):
     """A Python that can run vk_android_build.py (zstd: Python 3.14's compression.zstd or backports.zstd), or with split shader_split.py (zstd and lz4; this one first)"""
-    cands = [want] if want else ([sys.executable] if split else []) + [shutil.which('python3.14'), shutil.which('python3'), sys.executable]
+    if want: cands = [want]
+    elif WINDOWS:   # python.exe is the name there; the python3 / python3.14 a bare Windows has are the Store's stubs (WindowsApps), which open the Store
+        cands = [sys.executable] + [p for p in (shutil.which('python3.14'), shutil.which('python')) if p and 'windowsapps' not in p.lower()]
+    else: cands = ([sys.executable] if split else []) + [shutil.which('python3.14'), shutil.which('python3'), sys.executable]
     test = 'import sys\ntry: from compression import zstd\nexcept ImportError: from backports import zstd' + ('\nimport lz4.block' if split else '')
     for py in filter(None, cands):
         r = subprocess.run([py, '-c', test], capture_output=True)
@@ -281,7 +369,7 @@ def split_shaders(a, g, vdir, pkg, parts=None):   # parts: the version's (romfs,
     py = shader_python(a.shader_python, split=True)
     tmp = pkg.with_name(pkg.name + '.tmp'); shutil.rmtree(tmp, ignore_errors=True); tmp.mkdir(parents=True)
     print(f'shaders: splitting the shaders out of {rd} into {pkg} with {py} (a few minutes)', flush=True)
-    env = dict(os.environ, DM_GAME=g.id, J=str(a.J))
+    env = child_env(DM_GAME=g.id, DM_SPLIT_TARGETED='1')   # as the phone: only the files the profile's map names, when the build is the profile's and the tables come out the same
     r = subprocess.run([py, str(SPLIT), str(rd), str(ed / 'main'), str(tmp / 'pkg'),
                         *[str(tmp / f) for f in ('shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv')]], env=env)
     if r.returncode: raise Error(f'shader_split.py exit code {r.returncode}')
@@ -311,25 +399,19 @@ def pack_shaders(a, g, work, out, vdir, parts=None):
         py = shader_python(a.shader_python)
         print(f'shaders: building the Vulkan library {lib} from {pkg} with {py} (J={a.J}; about 10 minutes on DKB)', flush=True)
         (work / 'android-shaders' / 'work').mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ, DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
-        keys = []
-        if (g.dir / 'shader_seen.tsv').is_file() and (g.dir / 'shader_map.tsv').is_file():
-            map_keys_set = map_keys(g.dir / 'shader_map.tsv')
-            seen_lines = (g.dir / 'shader_seen.tsv').read_text().splitlines()
-            keys = sorted({l.split('\t')[0].strip() for l in seen_lines if l.strip() and not l.startswith('#') and l.split('\t')[0].strip() in map_keys_set})
-            if keys:
-                print(f'shaders: building {len(keys)} selected shaders from shader_seen.tsv', flush=True)
-        r = subprocess.run([py, str(VK_BUILD), '--target', 'vulkan', str(pkg), str(cache), *keys], env=env)
+        env = child_env(DM_GAME=g.id, J=str(a.J), WORK=str(work / 'android-shaders' / 'work'))
+        r = subprocess.run([py, str(VK_BUILD_WIN if WINDOWS else VK_BUILD), '--target', 'vulkan', str(pkg), str(cache)], env=env)
         if r.returncode: raise Error(f'vk_android_build.py exit code {r.returncode} (a package that lacks the profile\'s shaders stops it: delete {pkg} and the split runs again)')
         if not library_current(lib, g): raise Error(f'vk_android_build.py finished but {lib} is not a full library of {g.id} with the current inputs')
     else: print(f'shaders: {lib} is current (game {g.id}, inputs {dmsh_chain.inputs(g)})')
     dst.mkdir(parents=True, exist_ok=True)
     if not (lib / dmsh_chain.STAMP).is_file():   # a library copied without its stamp: written from its header (library_current took it from there)
         st = lib_stamp(lib); dmsh_chain.write_stamp(str(lib), st['game'], st['inputs'])
+        if WINDOWS: write_lf(lib / dmsh_chain.STAMP, (lib / dmsh_chain.STAMP).read_text(encoding='utf-8'))   # written in text mode: CR LF there
     for f in (VK_LIB, dmsh_chain.STAMP):
         s_, d_ = lib / f, dst / f
         if d_.is_file() and d_.stat().st_size == s_.stat().st_size and d_.stat().st_mtime_ns == s_.stat().st_mtime_ns: continue
-        tmp = d_.with_name(f + '.partial'); shutil.copy2(s_, tmp); tmp.rename(d_)
+        tmp = d_.with_name(f + '.partial'); shutil.copy2(s_, tmp); os.replace(tmp, d_)   # replace: Windows' rename does not take an existing name
     others = sorted(o.name for o in (out / 'shaders').iterdir() if o.name != name and o.name.startswith(VK_PREFIX) and o.is_dir())
     if others:   # kept: another APK (the test and the play app, an older build) may load one of them from this pack; delete by hand to save the space
         print(f'shaders: kept the libraries of other versions in {out / "shaders"}: {", ".join(others)} (about 350 MB each)')
@@ -355,8 +437,13 @@ def main():
     ap.add_argument('--no-shaders', action='store_true', help='make the pack without the shader library')
     ap.add_argument('--code-only', action='store_true', help='only rewrite the modules (the phone\'s rewrite step): pack.tsv, game.tsv and the shaders stay as they are')
     ap.add_argument('--keep-code', action='store_true', help='do not rewrite: the pack\'s modules must be there with their key files (the phone\'s pack step)')
+    ap.add_argument('--made-by', help='who makes this pack, written as its made_by row (the phone\'s pack step: "app <version>"; the launcher then updates the pack\'s code by itself when only the tools changed)')
     ap.add_argument('--in-process', action='store_true', help='run the rewriter in this process, no subprocesses (the phone\'s packer); the shader library must be current or left out')
     a = ap.parse_args()
+    if WINDOWS:
+        for s in (sys.stdout, sys.stderr): s.reconfigure(encoding='utf-8', errors='backslashreplace')   # as the tools' output (child_env): one encoding for the reader
+        if not a.in_process: _job = windows_job()   # noqa: F841  (held until the process ends)
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)   # CTRL_BREAK_EVENT (a GUI that shares a console): stop as on Ctrl-C, the tools stopped in the finally blocks
     folder = a.game.resolve()
     try:
         try: import capstone, lz4.block   # noqa: F401  (patch_nso.py needs both; checked here so a missing one fails before any work)
@@ -374,6 +461,11 @@ def main():
         mods = g.words('modules')
         srcs = {m: exe / m for m in mods}
         if missing := [m for m in mods if not srcs[m].is_file()]: raise Error(f'{exe}: no {", ".join(missing)} (the profile\'s modules are {" ".join(mods)})')
+        if not a.keep_code and (zb := [m for m in mods if nso_zbic(srcs[m])]):
+            sys.path.insert(0, str(REPO / 'dm/tools')); import nso   # its ZBIC decoder, checked here so a missing one fails before any work
+            try: ok = nso.zbic_decoder()
+            except nso.Error as e: raise Error(f'{" ".join(zb)}: ZBIC-compressed (system 22.0.0+): {e}') from None
+            if not ok: raise Error(f'{" ".join(zb)}: ZBIC-compressed (system 22.0.0+), and {sys.executable} has no decoder: {nso.ZBIC_MISSING} (android/README.md)')
         out = (a.out or folder.parent / f'{app:016X}-work' / 'android-pack').resolve()
         try: out.relative_to(REPO); raise Error(f'{out} is inside the repository: packs never go there')
         except ValueError: pass
@@ -384,17 +476,13 @@ def main():
         for m in mods:
             if known.get(m) and known[m] != ids[m]: print(f'[RED] {m} build {ids[m]} is not the profile\'s build {known[m]}: build-gated cuts do not apply')
         if a.keep_code:
-            if missing := [m for m in mods if not (out / f'{m}.patched.bin').is_file() or not (out / f'{m}.android.key').is_file()]:
-                raise Error(f'--keep-code: {out} has no complete {", ".join(missing)} (patched.bin and its key): rewrite first')
+            # each module needs its rewritten code and, written last by the rewrite, its key: a module without the key is a rewrite that did not finish (or one from before keys)
+            gaps = [f'{m} ({" and ".join(f for f in (f"{m}.patched.bin", f"{m}.android.key") if not (out / f).is_file())} missing)'
+                    for m in mods if not (out / f'{m}.patched.bin').is_file() or not (out / f'{m}.android.key').is_file()]
+            if gaps: raise Error(f'--keep-code: the rewrite step has not finished for {", ".join(gaps)} in {out}: run the rewrite step again')
             print('  modules kept as they are (--keep-code)')
         else:
-            try:
-                rewrite(sys.executable, srcs, out, max(1, a.j), g, a.in_process)
-                try:
-                    import fix_armv82_pac
-                    fix_armv82_pac.patch_pack(out)
-                except Exception as pe:
-                    print(f'warning: ARMv8.2 PAC patch failed: {pe}')
+            try: rewrite(sys.executable, srcs, out, max(1, a.j), g, a.in_process)
             finally: shutil.rmtree(out / '.nup-src', ignore_errors=True)   # the module copies a NUP game's rewrite read (rewriter_src)
         if a.code_only: print(f'done: the modules in {out} (--code-only: pack.tsv and the shaders unchanged)'); return
         if a.keep_code: upgrade_keys(srcs, out, g)   # before the copy below replaces the game.tsv an earlier key was made with (a rewrite run did it in rewrite)
@@ -405,9 +493,9 @@ def main():
         rows = [('format', str(FORMAT)), ('title_id', f'{app:016X}'), ('name', g.get('name', '')), ('version', str(ver)), ('target', 'android'),
                 ('modules', ' '.join(mods)), *[('build', f'{m}={ids[m]}') for m in mods], ('romfs', rel(romfs)),
                 *[('aoc', f'{tid - app - 0x1000}\t{rel(p)}') for tid, p in sorted(dlc.items())],
-                *([('shaders', shaders.relative_to(out).as_posix())] if shaders else []), ('packer', commit())]
+                *([('shaders', shaders.relative_to(out).as_posix())] if shaders else []), ('packer', commit()), *([('made_by', a.made_by)] if a.made_by else [])]
         tmp = out / 'pack.tsv.partial'
-        tmp.write_text(''.join(f'{k}\t{v}\n' for k, v in rows)); tmp.rename(out / 'pack.tsv')
+        write_lf(tmp, ''.join(f'{k}\t{v}\n' for k, v in rows)); os.replace(tmp, out / 'pack.tsv')
         size = sum(f.stat().st_size for f in out.rglob('*') if f.is_file())
     except (Error, pack_dump.Error) as e: sys.exit(f'[RED] {e}')
     print(f'done: {out} ({size / 2**20:.1f} MiB); RomFS {rel(romfs)} and {len(dlc)} DLC stay in the game folder')

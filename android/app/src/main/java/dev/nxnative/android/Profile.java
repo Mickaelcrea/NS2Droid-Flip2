@@ -22,13 +22,15 @@ final class Profile {
     String resolution = "";   // what Game resolution sets (build.gradle resolutionOf): "window", "scale:<choice>=<scale>/<console|handheld>,…" or "" (nothing: not offered)
     String gpuTs = "submission";   // game.tsv gpu_timestamps (build.gradle gpuTsOf): "segment" or "submission", what the host does without DM_NVN_GPU_TS (Game settings › GPU timing)
     String window = "";   // game.tsv android_window (build.gradle windowOf): the default Game resolution when the player chose none (Prefs.gameWindow), "" for the main screen's
+    boolean drs;   // game.tsv has drs_ctl rows (build.gradle drsOf): the host can steer the game's dynamic resolution (Prefs.drsGame)
+    boolean decoupled;   // game.tsv has fps_decouple rows (build.gradle decoupleOf): the game's speed follows its measured frame rate, so it gets a frame limit (Prefs.paced)
     String romfsChecks = "";   // game.tsv romfs_check rows (build.gradle romfsChecksOf): "<path>|<line>|<expected or main>", ';' between them (RomfsCheck)
 
     /** Whether Game resolution does something for this game (its profile has window_fn, res_levels or graphics_scale rows) */
     boolean hasResolution() { return resolution.equals("window") || resolution.startsWith("scale:"); }
 
     /**
-     * The host's environment lines for a Game resolution choice (Prefs.WINDOWS: "1920x1080", "original", "1280x720"): DM_WINDOW_SIZE=&lt;choice&gt; for a game with
+     * The host's environment lines for a Game resolution choice (Prefs.WINDOWS: "original", "2560x1440", "1920x1080", "1280x720", "960x540"): DM_WINDOW_SIZE=&lt;choice&gt; for a game with
      * window_fn rows (its window size) or res_levels rows (a cap on its dynamic resolution); DM_GRAPHICS_SCALE and DM_OPMODE from the choice's graphics_scale row for a game that sizes its scenes by the graphics scale (none for a choice
      * without a row: the game's own); none for a game with neither.
      */
@@ -75,6 +77,8 @@ final class Profile {
             p.romfsChecks = c.length > 10 ? c[10] : "";
             if (c.length > 11 && !c[11].isEmpty()) p.gpuTs = c[11];
             p.window = c.length > 12 ? c[12] : "";
+            p.decoupled = c.length > 13 && c[13].equals("1");
+            p.drs = c.length > 14 && c[14].equals("1");
             out.add(p);
         }
         return Collections.unmodifiableList(out);
@@ -97,13 +101,14 @@ final class Profile {
     /** The default game (the first): the graphics self-test runs its host */
     static Profile first() { return all().get(0); }
 
-    /** Why this APK cannot run a title, in a sentence (null when it has its profile) */
-    static String missing(String titleId, String what) {
+    /**
+     * Why this APK cannot run a title, in one plain sentence (null when it has its profile). Nothing inside this app can fix it (the host has the profile compiled in),
+     * so the sentence says what to get and no button offers Prepare or Retry. name: the game's name when known (a pack's, a job's), else null. The title IDs this app
+     * runs are in Settings › About
+     */
+    static String missing(String titleId, String name) {
         if (of(titleId) != null) return null;
-        // The title IDs this APK runs, so a user with another game sees it is not supported (rather than a broken dump); IDs only, no game names
-        List<String> ids = new ArrayList<>();
-        for (Profile p : all()) ids.add(p.titleId);
-        return (what == null ? titleId : what + " (" + titleId + ")") + " has no game profile in this app, so it cannot run here. This app runs: " + String.join(", ", ids) + ".";
+        return "This app version does not include " + (name == null || name.isEmpty() || name.equals(titleId) ? "this game" : name) + " (" + titleId + "). Install a build that includes it.";
     }
 
     /** A version of a dump in words: 0 is the base game itself (no update installed; Mario Kart World 1.8.0's supported build), any other an update */
@@ -114,6 +119,13 @@ final class Profile {
         List<String> all = new ArrayList<>();
         for (Long v : buildMap().keySet()) all.add(buildName(v));
         return "This app supports " + name + " (" + titleId + ") " + String.join(" or ", all) + " only.";
+    }
+
+    /** The builds this APK supports, in the player's words only ("1.8.0", "update 458752 or the base game"), for a refusal's main text (supported() has the build IDs) */
+    String supportedShort() {
+        List<String> all = new ArrayList<>();
+        for (Long v : buildMap().keySet()) { String d = display(v); all.add(d != null ? d : versionName(v)); }
+        return String.join(" or ", all);
     }
 
     /** One of the profile's builds in words: "1.8.0 (the base game, version 0, main d00e4f399e411d06…)", "update 458752 (main e25c90c1c1366388…)" */

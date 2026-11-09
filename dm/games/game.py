@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Game profiles: dm/games/<base game title ID>/game.tsv (key <TAB> values..., lines starting with # are comments) + the shader tables (and patches.py, the rewriter's patches of the game's builds) in the same folder. The shader tools, the host build, iOS packaging and the NSP script take each game's constants from here.
 # Usage: game.py list (list all profiles); game.py <id> <key> [<default>] (print that key's value, for shell; without a default a missing key is an error); game.py header <id> <out.h> (generate the host's game_profile.h);
+#   game.py seed <id> <out.h> (the Android host's vk_prewarm_seed.h: the profile's vk_prewarm.bin, the pipeline keys a first start makes ahead, as bytes; dm/gfx/vk_android/vka_pwlist.h);
 #   game.py dir <id> (print the profile folder); game.py link <id> <link> (point a symlink at the profile folder: make cannot take paths with spaces)
 #   From Python: import game; g = game.load() (takes DM_GAME; there is no default game: unset is an error that lists the profiles); game.by_title(title ID); g.get / g.words / g.int / g.builds() / g.table(file name)
 # DM_GAMES_DIR (folders separated by ':') adds profile folders outside the repository, searched after dm/games: the NSP script writes a provisional profile for a game without one into
@@ -122,7 +123,7 @@ def header(g):
         if len(rc) != 3 or not rc[0] or rc[0].startswith('/') or '..' in rc[0].split('/') or not rc[1].isdigit() or int(rc[1]) < 1 or not rc[2].strip() or any(c in ''.join(rc) for c in '|;'):
             sys.exit(f"{g.id}: romfs_check takes <path in the RomFS> <line, from 1> <expected line (no | or ;), or main for the version's main build ID>: {rc}")
     aw = g.get('android_window', '')   # the Android launcher's default Game resolution for this game when the player chose none (Prefs.gameWindow): one of Prefs.WINDOWS
-    if aw and aw not in ('1280x720', '960x540', '640x360', '1920x1080', 'original'): sys.exit(f'{g.id}: android_window must be 1280x720, 960x540, 640x360, 1920x1080 or original: {aw}')
+    if aw and aw not in ('2560x1440', '1920x1080', '1280x720', '960x540', '640x360', 'original'): sys.exit(f'{g.id}: android_window must be 2560x1440, 1920x1080, 1280x720, 960x540, 640x360 or original: {aw}')
     pl = g.get('pad_layout', 'simple')   # the virtual gamepad's first layout (DmGamepad.m; afterwards whatever the player switched to in game is kept): simple = 2D, full = 3D (D-pad, right stick, L3 / R3),
     if pl not in ('simple', 'full', 'touch'): sys.exit(f'{g.id}: pad_layout must be simple, full or touch: {pl}')   # touch = Tap (no control: every touch goes to the game's touch screen)
     sks = g.get('shader_key_skip', '')   # control-section bytes the shader keys hash as zeros, <offset>+<length> (hle_nvn.c keys_hash, shader_split.py key_ctl; Batman: Arkham Knight: GLSLC's compile information, 0x770+0x78)
@@ -144,6 +145,10 @@ def header(g):
     if mml not in ('on', 'off'): sys.exit(f'{g.id}: mem_map_limit must be on or off: {mml}')
     gts = g.get('gpu_timestamps', 'submission')   # counter timestamps (nvn_mtl.m rep_ticks): submission = one time per submission, segment = the GPU start / end of the segment holding the report
     if gts not in ('submission', 'segment'): sys.exit(f'{g.id}: gpu_timestamps must be submission or segment: {gts}')
+    rsub = ' '.join(g.get('romfs_substitute', '').split())   # damaged RomFS files (a .zs that is not a zstd stream) served as another image file (hle_fs.c img_serve; DM_ROMFS_SUBST overrides): <path>=<substitute path> ...
+    if any(w.count('=') != 1 or w.startswith(('=', '/')) or w.endswith('=') or '=/' in w for w in rsub.split()): sys.exit(f'{g.id}: romfs_substitute takes <path>=<substitute path> pairs, RomFS paths without a leading /: {rsub}')
+    dbr = g.get('draw_barriers', 'full')   # how draw passes are ordered (nvn_mtl.m barrier_game): full = each waits for all earlier GPU work, game = by the game's own barriers, so vertex work overlaps the previous pass's fragments
+    if dbr not in ('full', 'game'): sys.exit(f'{g.id}: draw_barriers must be full or game: {dbr}')
     om = g.get('op_mode', 'console')   # the operation mode reported at start (hle_oe.c dm_opmode; DM_OPMODE overrides): console = docked, handheld = touch screen in use (Super Mario Galaxy's pointer)
     if om not in ('console', 'handheld'): sys.exit(f'{g.id}: op_mode must be console or handheld: {om}')
     if pl == 'touch' and om != 'handheld': sys.exit(f'{g.id}: pad_layout touch needs op_mode handheld (the touch screen reaches the game only in handheld mode)')
@@ -159,6 +164,16 @@ def header(g):
             w, h = map(int, r[3].split('x'))
             if not (0 < w < 65536 and 0 < h < 65536): sys.exit(f'{g.id}: window_fn size must be 1..65535 each: {r[3]}')
             wfn.append('{' + q(r[0]) + f', {r[1]}, {r[2]}, {w}, {h}' + '}')
+    fdc = []   # the frame-rate controller's sdiv the host switches to the measured rate, one row per main build: <main build ID> <offset> (hle_fpslock.c sead_decouple)
+    for r in g.values('fps_decouple') if g.get('fps_decouple', '') else []:
+        if len(r) != 2 or not re.fullmatch(r'[0-9a-f]{32}', r[0]) or not re.fullmatch(r'0x[0-9a-fA-F]+', r[1]):
+            sys.exit(f"{g.id}: fps_decouple takes <main build ID (32 hex)> <offset of the frame-rate controller's sdiv>: {r}")
+        fdc.append('{' + q(r[0]) + f', {r[1]}' + '}')
+    drs = []   # the dynamic resolution controller's places, one row per main build: <main build ID> <params probe> <pick> <budget load> <preset flag> (probe.c drs_install)
+    for r in g.values('drs_ctl') if g.get('drs_ctl', '') else []:
+        if len(r) != 5 or not re.fullmatch(r'[0-9a-f]{32}', r[0]) or not all(re.fullmatch(r'0x[0-9a-fA-F]+', x) for x in r[1:]):
+            sys.exit(f"{g.id}: drs_ctl takes <main build ID (32 hex)> <parameter object probe> <pick> <budget load> <preset flag> (offsets): {r}")
+        drs.append('{' + q(r[0]) + ', ' + ', '.join(r[1:]) + '}')
     # Game resolution by the Switch 2 graphics scale (the Android launcher, build.gradle resolutionOf; the host reads DM_GRAPHICS_SCALE and DM_OPMODE, nothing is generated):
     # <the launcher's choice: WxH or original> <scale 0|1|2> <console|handheld>, for a game that sizes its scenes by the scale rather than its window
     if g.get('graphics_scale', ''):
@@ -183,6 +198,14 @@ def header(g):
             ls += [('0', 0)] * (12 - len(ls))
             rlv.append('{' + q(r[0]) + f', {r[1]}, {n}, {len(r) - 3}, ' + '{' + ', '.join(f'{{{o}, {ln}}}' for o, ln in ls) + '}}')
         if g.get('graphics_scale', ''): sys.exit(f'{g.id}: graphics_scale and res_levels are two levers for one setting: keep one')
+    # Depth-only mesh prepass draws skipped and their colour pass's EQUAL relaxed to LEQUAL on Qualcomm's driver (vka_draw.c mesh_cut; a workaround, open: rendering.md
+    # "Depth-only mesh prepass drawn as spikes on Qualcomm's driver"): one row per pair, <prepass mesh shader key> <colour pass mesh shader key>, 16 hex digits each
+    mpc = []
+    for r in g.values('mesh_prepass_cut'):
+        if len(r) != 2 or not all(re.fullmatch(r'[0-9a-f]{16}', x) for x in r) or r[0] == r[1]:
+            sys.exit(f'{g.id}: mesh_prepass_cut takes <prepass mesh shader key> <colour pass mesh shader key>, two different keys of 16 lowercase hex digits: {r}')
+        mpc.append(f'{{0x{r[0]}ull, 0x{r[1]}ull}}')
+    if len(mpc) > 64: sys.exit(f'{g.id}: mesh_prepass_cut: at most 64 pairs')
     api = g.get('device_api', '55.15')   # the NVN API major.minor version nvnDeviceGetInteger reports (hle_nvn.c)
     if not re.fullmatch(r'\d+\.\d+', api): sys.exit(f'{g.id}: device_api must be major.minor: {api}')
     src = f'dm/games/{g.id}' if g.dir.parent == HERE else str(g.dir)
@@ -226,12 +249,35 @@ def header(g):
          f'#define DM_GAME_TEX_DIRTY_UPLOAD {int(tdu == "on")}',
          f'#define DM_GAME_TEX_DYN_SLOTS {int(tds == "on")}',
          f'#define DM_GAME_GPU_TS_SEGMENT {int(gts == "segment")}',
+         f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
          f'#define DM_GAME_VCONV_RANGE {int(vcr == "on")}',
+         f'#define DM_GAME_ROMFS_SUBST {q(rsub)}',
          f'#define DM_GAME_WINDOW_FN {{{", ".join(wfn) or "{\"\", 0, 0, 0, 0}"}}}', f'#define DM_GAME_NWINDOW_FN {len(wfn)}',
+         '#define DM_GAME_MESH_PREPASS_CUT {' + (', '.join(mpc) or '{0, 0}') + '}', f'#define DM_GAME_NMESH_PREPASS_CUT {len(mpc)}',
+         f'#define DM_GAME_FPS_DECOUPLE {{{", ".join(fdc) or "{\"\", 0}"}}}', f'#define DM_GAME_NFPS_DECOUPLE {len(fdc)}',
+         f'#define DM_GAME_DRS_CTL {{{", ".join(drs) or "{\"\", 0, 0, 0, 0}"}}}', f'#define DM_GAME_NDRS_CTL {len(drs)}',
          '#define DM_GAME_RES_LEVELS {' + (', '.join(rlv) or '{"", 0, 0, 0, {{0, 0}}}') + '}', f'#define DM_GAME_NRES_LEVELS {len(rlv)}',
          *([f'#define DM_GAME_NVN_API_MAJOR {api.split(".")[0]}', f'#define DM_GAME_NVN_API_MINOR {api.split(".")[1]}'] if g.get('device_api', '') else []),   # without the key: by the SDK version (hle_nvn.c nvn_api)
          '']
     return '\n'.join(L)
+
+
+SEED = 'vk_prewarm.bin'   # the profile's prewarm seed list (dm/gfx/vk_android/vka_pwlist.h; made by dm/tools/vk_prewarm.py)
+def seed_header(g):   # vk_prewarm_seed.h: the seed's bytes for vka_pso.c (none: length 0)
+    p = g.dir / SEED
+    b = p.read_bytes() if p.is_file() else b''
+    L = [f'// Generated by dm/games/game.py seed from {g.id}/{SEED} ({len(b)} bytes): the prewarm seed list (dm/gfx/vk_android/vka_pwlist.h). Do not edit', '#include <stddef.h>',
+         f'static const unsigned char dm_vk_prewarm_seed[{max(len(b), 1)}] __attribute__((aligned(8))) = {{']
+    for i in range(0, len(b), 32): L.append(''.join(f'{x},' for x in b[i:i + 32]))
+    if not b: L.append('0')
+    L += ['};', f'static const size_t dm_vk_prewarm_seed_len = {len(b)};', '']
+    return '\n'.join(L)
+
+
+def write_if_changed(out, text):   # written only when it changes: make runs this every time (the profile folder can change under the same GAME), and an unchanged header must not rebuild the host
+    out = Path(out); out.parent.mkdir(parents=True, exist_ok=True)
+    if not (out.exists() and out.read_text() == text):
+        tmp = out.with_name(out.name + '.tmp'); tmp.write_text(text); tmp.replace(out)
 
 
 if __name__ == '__main__':
@@ -239,9 +285,9 @@ if __name__ == '__main__':
     if a == ['list']:
         for g in all_games(): print(f'{g.id}\t{g.title_id:016X}\t{g.get("name", "")}')
     elif len(a) == 3 and a[0] == 'header':
-        out, text = Path(a[2]), header(load(a[1])); out.parent.mkdir(parents=True, exist_ok=True)
-        if not (out.exists() and out.read_text() == text):   # written only when it changes: make runs this every time (the profile folder can change under the same GAME), and an unchanged header must not rebuild the host
-            tmp = out.with_name(out.name + '.tmp'); tmp.write_text(text); tmp.replace(out)
+        write_if_changed(a[2], header(load(a[1])))
+    elif len(a) == 3 and a[0] == 'seed':
+        write_if_changed(a[2], seed_header(load(a[1])))
     elif len(a) == 2 and a[0] == 'dir':
         print(load(a[1]).dir)
     elif len(a) == 3 and a[0] == 'link':   # link → the profile folder (replaced when it points elsewhere)
@@ -252,4 +298,4 @@ if __name__ == '__main__':
     elif len(a) in (2, 3):
         print(load(a[0]).get(*a[1:]))
     else:
-        sys.exit(__doc__ or 'usage: game.py list | game.py <id> <key> [<default>] | game.py header <id> <out.h> | game.py dir <id> | game.py link <id> <link>')
+        sys.exit(__doc__ or 'usage: game.py list | game.py <id> <key> [<default>] | game.py header <id> <out.h> | game.py seed <id> <out.h> | game.py dir <id> | game.py link <id> <link>')

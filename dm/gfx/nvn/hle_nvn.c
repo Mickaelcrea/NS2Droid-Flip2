@@ -40,7 +40,15 @@
 typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
 nvn_slot_t nvn_slot[NVN_NFUNC];                 // The thunk accesses it by i*16; the layout must not change
 _Static_assert(sizeof(nvn_slot_t) == 16, "the trampolines are addressed in 16-byte steps");
-extern void *nvn_thunk[NVN_NFUNC];
+extern void *nvn_thunk[NVN_NFUNC], *nvn_thunk_fast[NVN_NFUNC];
+// Call counts (the counting trampolines, nvn_thunks.S): only when asked for (DM_NVN_COUNT=1, or a per-frame table DM_NVN_TSV with its call rows; DM_NVN_TSV_CALLS=0
+// writes only the timing rows): each count is an atomic add on a cache line every recording thread shares. Otherwise the game gets the uncounted trampolines and the
+// per-frame call lines are not written (nxnative e250bb8b)
+static int nvn_counting(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("DM_NVN_COUNT"), *c = getenv("DM_NVN_TSV_CALLS"); v = (e && atoi(e)) || (getenv("DM_NVN_TSV") && !(c && !atoi(c))); }
+    return v;
+}
 extern const char *nvn_names[NVN_NFUNC];
 extern void nvn_unimpl_entry(void);
 extern void nvn_prof_entry(void);
@@ -95,7 +103,7 @@ static void nvn_init_slots(void) {
 static void *nvn_lookup(const char *name) {
     nvn_init_slots();
     for (unsigned i = 0; i < NVN_NFUNC; i++)
-        if (!strcmp(nvn_names[i], name)) return nvn_thunk[i];
+        if (!strcmp(nvn_names[i], name)) return nvn_counting() ? nvn_thunk[i] : nvn_thunk_fast[i];
     LOG("[RED] NVN address lookup of an unknown name: %s", name ? name : "(null)");
     return NULL;
 }
@@ -520,7 +528,9 @@ typedef struct { const uint8_t *mem; uint64_t size; tex_t t; uint64_t stamp; con
 static flush_tex *g_ft; static size_t g_nft, g_cft; static pthread_mutex_t g_ft_mu = PTHREAD_MUTEX_INITIALIZER;
 static void ft_add(const tex_t *t) {
     // Buffer textures are views onto the pool buffer the GPU reads directly (tex_mtl in nvn_mtl.m); an upload would push Age of Calamity's 1,048,576-texel R32F one through tex_desc, past Metal's 2D limit
-    if (!DM_GAME_TEX_FLUSH_UPLOAD || !t->mem || !t->pool || t->has_layout || t->d.target == NVN_TEXTURE_TARGET_BUFFER || (t->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) ||
+    // A sparse pool's addresses are no memory the CPU writes or flushes, and no range nvn_dirty tracks, so they read as dirty at once: every texture in one, a render target too, came out CPU-written at its first
+    // use in a profile with tex_dirty_upload. What the CPU wrote into the physical pages behind one is seen through the page table instead (tex_from_storage, sparse_look)
+    if (!DM_GAME_TEX_FLUSH_UPLOAD || !t->mem || !t->pool || t->pool->vp || t->has_layout || t->d.target == NVN_TEXTURE_TARGET_BUFFER || (t->pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS) ||
         (t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET | NVN_TEXTURE_FLAGS_COMPRESSIBLE))) return;
     pthread_mutex_lock(&g_ft_mu);
     if (g_nft == g_cft && !(g_ft = realloc(g_ft, (g_cft = g_cft ? 2 * g_cft : 1024) * sizeof *g_ft))) die("flush_tex allocation failed");
@@ -636,6 +646,7 @@ int nvn_flushed(const void *p, uint64_t n) {   // whether the CPU flushed any of
     pthread_mutex_unlock(&g_fl_mu);
     return r;
 }
+__attribute__((weak)) int dm_codec_is_video_mem(const void *mem, uint64_t size, uint32_t *stride) { (void)mem; (void)size; (void)stride; return 0; }
 NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b) {
     const tex_builder_t *s = (const tex_builder_t *)b; tex_t *o = TX(t);
     // Re-initializing a texture object that is still live (without a Finalize first): release the host texture of the old serial first. SMBW re-initializes its transient render targets on the same object every frame and never Finalizes them;
@@ -646,6 +657,13 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
     o->has_layout = s->has_layout; memcpy(o->layout, s->layout, 8); o->set_swz = s->set_swz; o->stencil = s->stencil; o->swz = s->swz;
     nvn_tex_layout(&o->d, &o->L);
     o->mem = s->pool && s->pool->mem ? s->pool->mem + s->off : NULL;
+    uint32_t vstride = 0;
+    if (o->mem && !(o->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) &&
+        dm_codec_is_video_mem(o->mem, o->L.size, &vstride)) {
+        o->d.flags |= NVN_TEXTURE_FLAGS_LINEAR;
+        if (!o->d.stride) o->d.stride = vstride ? vstride : 7680;
+        nvn_tex_layout(&o->d, &o->L);
+    }
     o->serial = nvn_new_serial(); mtl_tex_init(o);
     if (o->mem) pc_use(o->pool, 't', o->off, o->L.size);
     if (o->mem && o->d.flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) mtl_pool_need(o->mem, o->L.size, "a linear texture");   // its GPU content is copied back into the storage (vka_tex_writeback)
@@ -1132,8 +1150,9 @@ static void rec_draw_idx(NVNcommandBuffer *c, p_draw_idx d) { size_t n = d.ind |
 #if defined(__ANDROID__)
 // NVN2 mesh draw: count task workgroups (or mesh workgroups when the program has no task shader) from first, with the bound program's task and mesh shaders. A draw like the
 // others (it opens and joins render passes the same way); the Vulkan replay draws it with vkCmdDrawMeshTasksEXT (vka_draw.c). The signature is the game's calls' (switch2mac
-// hle_nvn.c, MIT: x1 = 0, x2 = workgroups in Mario Kart World). The indirect, 3D and multi-draw variants keep the unimplemented stub (a red line when one is called)
+// hle_nvn.c, MIT: x1 = 0, x2 = workgroups in Mario Kart World). Indirect draw: arguments (groupCountX, Y, Z) read from ind by GPU. The 3D and multi-draw variants keep the unimplemented stub.
 NVN_NOPROTO(nvnCommandBufferDrawMeshTasks, void, NVNcommandBuffer *c, int first, int count) { rec_draw(c, (p_draw){NVN_PRIM_MESH, first, count, 1, 0, 0}); }
+NVN_NOPROTO(nvnCommandBufferDrawMeshTasksIndirect, void, NVNcommandBuffer *c, NVNbufferAddress ind) { rec_draw(c, (p_draw){NVN_PRIM_MESH, 0, 0, 1, 0, ind}); }
 #endif
 static void copy_view(view_t *dst, uint8_t *has, const NVNtextureView *v) { *has = v != NULL; if (v) *dst = *(const view_t *)v; }
 // Records with textures snapshot the texture objects (0x80 bytes each, after the record struct) and replay reads the snapshots: an NVN command no longer depends on the API object once recorded, and the game may finalize, free or reuse it before submitting.
@@ -1471,6 +1490,11 @@ static const char *const g_nops[] = {
     "nvnCommandBufferPopDebugGroupId",
     "nvnCommandBufferInsertDebugMarkerStatic",
     "nvnCommandBufferWaitEvent",
+    "nvnCommandBufferSetComputeWorkloadPriority",
+    "nvnCommandBufferSetGraphicsWorkloadPriority",
+    "nvnCommandBufferBindShadingRateImage",
+    "nvnCommandBufferSetShadingRatePaletteMode",
+    "nvnCommandBufferShadingRateImagePalette",
     "nvnWindowFinalize",
 };
 __attribute__((constructor)) static void nvn_nops_register(void) {
@@ -1608,6 +1632,7 @@ static void dump_frame(void) {
     }
     uint64_t total = 0; unsigned nfn = 0;
     char line[8192]; size_t o = 0; line[0] = 0;
+    if (!nvn_counting()) { if (!g_frame) LOG("[nvn] call counts off (DM_NVN_COUNT=1 turns them on)"); g_frame++; cs_dump(); goto counts_done; }
     for (unsigned i = 0; i < NVN_NFUNC; i++) {
         uint64_t c = atomic_load(&nvn_slot[i].cnt), d = c - g_prev[i];
         g_prev[i] = c;
@@ -1620,6 +1645,7 @@ static void dump_frame(void) {
     if (g_frame <= (uint64_t)nframes) LOG("[nvn] %s %llu: %u functions %llu calls |%s", g_frame ? "frame" : "init", g_frame, nfn, total, line);
     else if (g_frame % 300 == 0) LOG("[nvn] frame %llu: %u functions %llu calls", g_frame, nfn, total);
     g_frame++; cs_dump();
+counts_done:
     // Every 300 frames read resident memory and hand it to the graphics layer to print the memory readout line (mtl_mem_stat, low frequency, capped). Memory watchdog: when resident memory exceeds the cap, log a failure and exit on its own. On by default only on the Mac host (24 GB: runaway host memory
     // drags the whole machine into a kernel panic, which happened twice with other programs on the same machine), or set for tests with DM_MEM_CAP_GB=<integer>; the player's iOS app has no cap (exiting before the system kills it is pointless and only adds another kind of crash)
     if (g_frame % 300 == 0) { int64_t foot = plat_footprint_bytes();
@@ -1722,6 +1748,7 @@ static void power_line(uint64_t frame) {
     pt = t; pe = e; pcpu = cpu; pp = p; piw = iw; ppw = idw; pg = g; pf = frame; mtl_bw(&pld, &pst, &pfu); pudc = mtl_udc_saved_bytes();
 #endif
 }
+int nxhost_fps_limit_get(void) __attribute__((weak));   // the host's frame limit (hle_fpslock.c), 0 without one
 static void tsummary(uint64_t frame) {
     char line[1024]; size_t o = 0;
     for (int k = 0; k < 6; k++) {
@@ -1737,6 +1764,12 @@ static void tsummary(uint64_t frame) {
         LOG("[nvn] frame interval up to frame %llu: >%.1fms %u / %u frames, p99 %.2f ms", frame, tgt, over, n, v[(n * 99) / 100 < n ? (n * 99) / 100 : n - 1]); } }
     { unsigned n = g_presn < TWIN ? g_presn : TWIN, k = 0, drop = 0, discard = 0; double v[TWIN];   // on-screen present: dropped frame = on screen longer than its hold × 1.5 (pres_expect_ms) or discarded
       for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += x > g_pres_exp[i] * 1.5; } }
+      // Paced by the host's frame limiter (hle_fpslock.c; presents on the display's own tick): a frame is held as long as the game takes, so the hold of one present
+      // interval (pres_expect_ms) would call every frame under 60 fps dropped. There a frame counts as dropped when it took 1.5 times the limiter's period or this
+      // window's median, whichever is longer: the hitches, not a steady 36 fps (pres_expect_ms itself stays: the frame step reads it)
+      { int lim = &nxhost_fps_limit_get ? nxhost_fps_limit_get() : 0;
+        if (lim > 0 && k) { double m[TWIN]; memcpy(m, v, k * sizeof *m); qsort(m, k, sizeof *m, dcmp); double e = m[k / 2] > 1000.0 / lim ? m[k / 2] : 1000.0 / lim;
+          drop = discard; for (unsigned i = 0; i < k; i++) drop += v[i] > e * 1.5; } }
       int64_t foot = plat_footprint_bytes(); double fp = foot >= 0 ? foot / 1048576.0 : -1;
       double br = dm_brightness_now();   // footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
       if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] on-screen up to frame %llu: %u frames, dropped %u (discarded %u), p99 %.2f ms; footprint %.0f MiB; brightness %.2f; thermal %d", frame, k + discard, drop, discard, v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }

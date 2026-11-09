@@ -46,7 +46,8 @@ class AnyCpu(unittest.TestCase):
                 self.assertFalse(flags & (REQUIRED32 | PREFERRED32), f'{dll.name} is 32-bit only or prefers 32-bit')
 
     def test_launcher_universal(self):
-        self.assertEqual(macho_archs((BIN / 'dmsh_xlate').read_bytes()), ['arm64', 'x86_64'])
+        p = BIN / 'dmsh_xlate.macho' if (BIN / 'dmsh_xlate.macho').exists() else (BIN / 'dmsh_xlate')
+        self.assertEqual(macho_archs(p.read_bytes()), ['arm64', 'x86_64'])
 
     def test_csproj_pins_anycpu(self):   # so a build for a runtime ID does not tie the next rebuild to it
         self.assertIn('<PlatformTarget>AnyCPU</PlatformTarget>', (REPO / 'dm/gfx/tools/dmsh_xlate/dmsh_xlate.csproj').read_text())

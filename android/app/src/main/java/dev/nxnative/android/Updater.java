@@ -29,10 +29,6 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -55,20 +51,22 @@ import java.util.Locale;
 import javax.net.ssl.HttpsURLConnection;
 
 /**
- * The in-app updater (release app only, dev.bananative.android). Once per app start (a new process: not on a resume or a rotation), Home asks GitHub's releases
- * API for the public releases of moceure/BananaNative (the list, not /releases/latest: every release is a pre-release, which /latest skips); when one is newer than
- * this app (UpdateCheck.pick) a popup offers Update or Later. Update downloads the release's own APK through its browser_download_url (so
- * GitHub's download count counts it; nothing is mirrored) into the cache, checks its size and its SHA-256 against the API's digest, and installs it with
- * PackageInstaller; Android asks the player to confirm, and first to allow installs from this app when that is off. A check that fails says nothing (a log line).
+ * The in-app updater (release app only, dev.bananative.android). Once per app start (a new process: not on a resume or a rotation), Home asks every release source
+ * at once, with short timeouts (UpdateCheck.SOURCES: GitHub's releases API for moceure/BananaNative, the list, not /releases/latest: every release is a
+ * pre-release, which /latest skips; then the same releases on git.eden-emu.dev's Forgejo API), each list through a URL with a fresh cache-busting query
+ * parameter and Cache-Control: no-cache, so no shared cache in front of a host can answer with an old list (releases(Source)). A source that fails is left out (a log line); when a release in
+ * any answer is newer than this app (UpdateCheck.pickAll: the highest version) a popup offers Update or Later. Update downloads the release's own APK through its
+ * browser_download_url (only on that source's own hosts; the source counts the download) into the cache, checks its size and, when the API gives a digest, its
+ * SHA-256, and installs it with PackageInstaller (limited to this package; Android itself refuses an update signed with another certificate); Android asks the player to confirm, and first to allow installs from this app when that is off. A check that fails says nothing (a log line).
  * <p>
- * Test apps never check, unless their files folder (Android/data/&lt;app&gt;/files/update.txt, adb) holds KEY=VALUE lines: repo=&lt;owner/name&gt; (another GitHub
- * repository), url=&lt;https URL of a releases list in the API's JSON&gt;, version=&lt;X.Y.Z the app takes as its own&gt; (a test app's versionName is no release
- * version). Settings › Updates › Check for updates checks at once.
+ * Test apps never check, unless their files folder (Android/data/&lt;app&gt;/files/update.txt, adb) holds KEY=VALUE lines: repo=&lt;owner/name&gt; (a GitHub
+ * repository), forgejo=&lt;owner/name&gt; (a repository on git.eden-emu.dev), url=&lt;https URL of a releases list in the APIs' JSON; its assets may be on its
+ * own host or GitHub's&gt;, version=&lt;X.Y.Z the app takes as its own&gt; (a test app's versionName is no release version); the sources named are asked, in
+ * that order. Settings › Updates › Check for updates checks at once.
  */
 final class Updater {
     private Updater() {}
 
-    static final String REPO = "hidayat077/NS2Native";
     private static final String TAG = "nxupdate";
     private static final long MAX_APK = 1L << 30;
     private static final String ACTION = ".UPDATE_INSTALL_STATUS";
@@ -102,16 +100,22 @@ final class Updater {
     }
 
     /** Whether this app checks at all: the release app, or a test app with an update.txt naming a repository or a URL */
-    static boolean available(Context c) {
-        if (BuildConfig.NX_LIVE) return true;
-        java.util.Map<String, String> o = override(c);
-        return o.containsKey("repo") || o.containsKey("url");
-    }
+    static boolean available(Context c) { return !sources(c).isEmpty(); }
 
-    private static String apiUrl(Context c) {
+    /** The sources this app asks, in order: UpdateCheck.SOURCES in the release app, those update.txt names in a test app (none without it) */
+    static List<UpdateCheck.Source> sources(Context c) {
+        if (BuildConfig.NX_LIVE) return UpdateCheck.SOURCES;
         java.util.Map<String, String> o = override(c);
-        if (o.containsKey("url")) return o.get("url");
-        return "https://api.github.com/repos/" + o.getOrDefault("repo", REPO) + "/releases?per_page=10";
+        List<UpdateCheck.Source> l = new ArrayList<>();
+        if (o.containsKey("repo")) l.add(UpdateCheck.github(o.get("repo")));
+        if (o.containsKey("forgejo")) l.add(UpdateCheck.forgejo(o.get("forgejo")));
+        if (o.containsKey("url")) {
+            String u = o.get("url"), host = Uri.parse(u).getHost();
+            List<String> hosts = new ArrayList<>(UpdateCheck.github(UpdateCheck.REPO).assetHosts);
+            if (host != null) hosts.add(host.toLowerCase(Locale.ROOT));
+            l.add(new UpdateCheck.Source(host != null ? host : u, u, "application/json", null, hosts.toArray(new String[0])));
+        }
+        return l;
     }
 
     /** The version this app compares against: its versionName (a test app's update.txt version= instead) */
@@ -119,49 +123,102 @@ final class Updater {
 
     // ---- The check ----
 
-    private static HttpsURLConnection open(String url, String accept) throws IOException {
+    private static final int API_CONNECT_MS = 6000, API_READ_MS = 8000;   // a check: short; the sources are asked at once and one that is down is left out
+    private static final int DL_CONNECT_MS = 15000, DL_READ_MS = 30000;   // a download
+    private static final int MAX_LIST = 4 << 20;   // a releases list larger than this is not read
+
+    /**
+     * An https GET of url; label (the source's name) names the server in the messages. fresh asks every cache on the way (Cache-Control: no-cache, Pragma:
+     * no-cache for the old ones) to revalidate with the origin rather than answer from a stored copy; the releases lists are fetched so, downloads are not.
+     */
+    private static HttpsURLConnection open(String url, String accept, String label, int connectMs, int readMs, boolean fresh) throws IOException {
         URL u = new URL(url);
         if (!"https".equals(u.getProtocol())) throw new Failure("not an https link: " + url);
         HttpsURLConnection c = (HttpsURLConnection) u.openConnection();
         c.setRequestProperty("User-Agent", "BananaNative-updater");
         c.setRequestProperty("Accept", accept);
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(30000);
-        c.setInstanceFollowRedirects(true);   // release assets redirect to GitHub's object storage (https to https)
+        if (fresh) {
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setRequestProperty("Pragma", "no-cache");
+            c.setUseCaches(false);
+        }
+        c.setConnectTimeout(connectMs);
+        c.setReadTimeout(readMs);
+        c.setInstanceFollowRedirects(true);   // GitHub's release assets redirect to its object storage (https to https: HttpURLConnection never follows a change of protocol)
         int code = c.getResponseCode();
-        if (code == 403 || code == 429) { c.disconnect(); throw new Failure("GitHub rate limit, try again later"); }
-        if (code != 200) { c.disconnect(); throw new Failure("GitHub answered HTTP " + code); }
+        if (code == 403 || code == 429) { c.disconnect(); throw new Failure(label + " rate limit, try again later"); }
+        if (code != 200) { c.disconnect(); throw new Failure(label + " answered HTTP " + code); }
         return c;
     }
 
-    private static String why(Throwable e) {
-        if (e instanceof UnknownHostException || e instanceof ConnectException) return "No network (cannot reach GitHub)";
-        if (e instanceof SocketTimeoutException) return "No network (GitHub did not answer in time)";
+    private static String why(Throwable e, String label) {
+        if (e instanceof UnknownHostException || e instanceof ConnectException) return "No network (cannot reach " + label + ")";
+        if (e instanceof SocketTimeoutException) return "No network (" + label + " did not answer in time)";
         if (e instanceof Failure) return e.getMessage();
-        if (e instanceof JSONException) return "GitHub's answer could not be read: " + e.getMessage();
+        if (e instanceof IllegalArgumentException) return label + "'s answer could not be read: " + e.getMessage();
         return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
-    /** The releases API's list as UpdateCheck's releases (network: call off the UI thread) */
-    static List<UpdateCheck.Release> releases(Context ctx) throws IOException, JSONException {
-        HttpsURLConnection c = open(apiUrl(ctx), "application/vnd.github+json");
+    /**
+     * One source's releases (network). The list is asked through a URL that no cache has seen: UpdateCheck.busted appends a fresh query parameter at request
+     * time, so each check is its own cache key, and the request says Cache-Control: no-cache. A shared cache in front of git.eden-emu.dev (Cloudflare and/or
+     * the server's, cache-control: public, max-age=180, x-cache-enabled: true) kept answering s.api with the list as of two hours before v0.2.3 was published
+     * while the same URL with another query gave the current list, so every phone said up to date; the headers alone cannot be relied on (that cache ignored
+     * max-age), the parameter can. The APK download is left as it is: an asset's URL is new with each release, and the file is checked by size and, when
+     * the API gives a digest, SHA-256 (fetch).
+     */
+    private static List<UpdateCheck.Release> releases(UpdateCheck.Source s) throws IOException {
+        HttpsURLConnection c = open(UpdateCheck.busted(s.api, Long.toString(System.currentTimeMillis())), s.accept, s.name, API_CONNECT_MS, API_READ_MS, true);
         String body;
-        try (InputStream in = c.getInputStream()) { body = new String(in.readAllBytes(), StandardCharsets.UTF_8); }
-        finally { c.disconnect(); }
-        List<UpdateCheck.Release> out = new ArrayList<>();
-        JSONArray rel = new JSONArray(body);
-        for (int k = 0; k < rel.length(); k++) {
-            JSONObject r = rel.getJSONObject(k);
-            List<UpdateCheck.Asset> assets = new ArrayList<>();
-            JSONArray as = r.optJSONArray("assets");
-            for (int j = 0; as != null && j < as.length(); j++) {
-                JSONObject a = as.getJSONObject(j);
-                assets.add(new UpdateCheck.Asset(a.optString("name", ""), a.optString("browser_download_url", ""), a.optLong("size", 0),
-                        a.isNull("digest") ? null : a.optString("digest", null)));
-            }
-            out.add(new UpdateCheck.Release(r.optString("tag_name", ""), r.optBoolean("draft"), r.optBoolean("prerelease"),
-                    r.isNull("body") ? "" : r.optString("body", ""), assets));
+        try (InputStream in = c.getInputStream()) {
+            byte[] b = in.readNBytes(MAX_LIST + 1);
+            if (b.length > MAX_LIST) throw new Failure(s.name + "'s answer is too large");
+            body = new String(b, StandardCharsets.UTF_8);
+        } finally { c.disconnect(); }
+        return UpdateCheck.parse(body, s);
+    }
+
+    /**
+     * Every source's releases, asked at once (network: call off the UI thread): one list per source, in order, null for a source that failed (a log line). Only
+     * when every source fails, a Failure that says why for each.
+     */
+    static List<List<UpdateCheck.Release>> releases(Context ctx) throws IOException {
+        List<UpdateCheck.Source> src = sources(ctx);
+        int n = src.size();
+        List<List<UpdateCheck.Release>> got = new ArrayList<>();
+        String[] err = new String[n];
+        Thread[] t = new Thread[n];
+        for (int k = 0; k < n; k++) {
+            got.add(null);
+            final int i = k; final UpdateCheck.Source s = src.get(k);
+            t[k] = new Thread(() -> {
+                List<UpdateCheck.Release> l = null; String e = null;
+                try { l = releases(s); }
+                catch (Throwable x) { e = why(x, s.name); }
+                synchronized (got) { got.set(i, l); err[i] = e; }
+            }, "nx-update-" + k);
+            t[k].start();
         }
+        long end = System.currentTimeMillis() + API_CONNECT_MS + API_READ_MS + 2000;
+        for (Thread x : t) {
+            try { x.join(Math.max(1, end - System.currentTimeMillis())); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+        List<List<UpdateCheck.Release>> out = new ArrayList<>();
+        StringBuilder fails = new StringBuilder();
+        synchronized (got) {
+            for (int k = 0; k < n; k++) {
+                List<UpdateCheck.Release> l = got.get(k);
+                if (l == null) {
+                    String e = err[k] != null ? err[k] : "No network (" + src.get(k).name + " did not answer in time)";
+                    Log.w(TAG, "release source " + src.get(k).name + " failed: " + e);
+                    fails.append(fails.length() > 0 ? "; " : "").append(e);
+                }
+                out.add(l);
+            }
+        }
+        boolean any = false;
+        for (List<UpdateCheck.Release> l : out) any |= l != null;
+        if (!any) throw new Failure(n == 0 ? "no release source" : fails.toString());
         return out;
     }
 
@@ -178,9 +235,9 @@ final class Updater {
             int[] cur = UpdateCheck.appVersion(version(app));
             if (cur == null) { Log.i(TAG, "check skipped: version " + version(app) + " is not X.Y.Z"); return; }
             UpdateCheck.Update u;
-            try { u = UpdateCheck.pick(releases(app), cur); }
+            try { u = UpdateCheck.pickAll(releases(app), cur); }
             catch (Throwable e) {   // silent: a log line only
-                Log.w(TAG, "update check failed: " + why(e));
+                Log.w(TAG, "update check failed: " + why(e, "the release sources"));
                 return;
             }
             if (u == null) { Log.i(TAG, "up to date (" + version(app) + ")"); return; }
@@ -193,7 +250,7 @@ final class Updater {
     /** Settings › Updates › Check for updates: the popup when a newer release exists, else "You're up to date" */
     static void checkNow(Activity a) {
         if (!available(a)) {
-            msg(a, "Updates", "Only the release app (dev.ns2native.android) checks for updates. A test app checks when update.txt in its files folder names repo= or url=.");
+            msg(a, "Updates", "Only the release app (dev.bananative.android) checks for updates. A test app checks when update.txt in its files folder names repo= or url=.");
             return;
         }
         int[] cur = UpdateCheck.appVersion(version(a));
@@ -203,8 +260,8 @@ final class Updater {
         Context app = a.getApplicationContext();
         new Thread(() -> {
             UpdateCheck.Update u = null; String err = null;
-            try { u = UpdateCheck.pick(releases(app), cur); }
-            catch (Throwable e) { err = why(e); Log.w(TAG, "update check failed: " + err); }
+            try { u = UpdateCheck.pickAll(releases(app), cur); }
+            catch (Throwable e) { err = why(e, "the release sources"); Log.w(TAG, "update check failed: " + err); }
             final UpdateCheck.Update got = u; final String fail = err;
             UI.post(() -> {
                 if (gone(a)) return;
@@ -241,7 +298,7 @@ final class Updater {
             sv.addView(t);
             Ui.add(box, sv, 12);
         }
-        Ui.add(box, Ui.small(a, u.apk.name + " · " + UpdateCheck.mb(u.apk.size) + " · from GitHub"), 10);
+        Ui.add(box, Ui.small(a, u.apk.name + " · " + UpdateCheck.mb(u.apk.size) + " · from " + u.release.source.name), 10);
         new AlertDialog.Builder(a).setTitle("Update available").setView(box)
                 .setPositiveButton("Update", (d, w) -> download(a, u))
                 .setNegativeButton("Later", null)
@@ -326,7 +383,7 @@ final class Updater {
                     bar.setProgress(total > 0 ? (int) (n * 1000 / total) : 0);
                     st.setText(UpdateCheck.mb(n) + " of " + UpdateCheck.mb(total));
                 })); }
-            catch (Throwable e) { err = why(e); Log.w(TAG, "download of " + u.apk.url + " failed: " + err); }
+            catch (Throwable e) { err = why(e, u.release.source.name); Log.w(TAG, "download of " + u.apk.url + " failed: " + err); }
             final File got = f; final String fail = err;
             UI.post(() -> {
                 if (d.isShowing()) d.dismiss();
@@ -352,7 +409,8 @@ final class Updater {
         MessageDigest md;
         try { md = MessageDigest.getInstance("SHA-256"); } catch (NoSuchAlgorithmException e) { throw new Failure("no SHA-256"); }
         long n = 0;
-        HttpsURLConnection conn = open(u.apk.url, "application/octet-stream");   // the asset's own browser_download_url: GitHub counts the download
+        if (!UpdateCheck.allowedAsset(u.apk.url, u.release.source)) throw new Failure("the download link is not on " + u.release.source.name + ": " + u.apk.url);   // UpdateCheck.apk checked it already
+        HttpsURLConnection conn = open(u.apk.url, "application/octet-stream", u.release.source.name, DL_CONNECT_MS, DL_READ_MS, false);   // the asset's own browser_download_url, as it is: the source counts the download; no cache-busting (the link is new per release, the file is checked below)
         try (InputStream in = conn.getInputStream(); OutputStream out = new FileOutputStream(part)) {
             byte[] b = new byte[1 << 16]; int k; long shown = 0;
             while ((k = in.read(b)) > 0) {
@@ -381,7 +439,7 @@ final class Updater {
         if (!a.getPackageManager().canRequestPackageInstalls()) {
             pending = apk;
             new AlertDialog.Builder(a).setTitle("Allow installs")
-                    .setMessage("To install the update, allow NS2Native to install apps (\"Install unknown apps\"), then come back.")
+                    .setMessage("To install the update, allow Banana Native to install apps (\"Install unknown apps\"), then come back.")
                     .setPositiveButton("Open settings", (d, w) -> a.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + a.getPackageName()))))
                     .setNegativeButton("Cancel", (d, w) -> { pending = null; apk.delete(); })
                     .setCancelable(false).show();
@@ -389,7 +447,7 @@ final class Updater {
         }
         pending = null;
         try { commit(a, apk); }
-        catch (IOException | RuntimeException e) { Log.w(TAG, "install failed: " + e); msg(a, "Update not installed", why(e)); }
+        catch (IOException | RuntimeException e) { Log.w(TAG, "install failed: " + e); msg(a, "Update not installed", why(e, "the installer")); }
     }
 
     /** MainActivity.onResume: back from "Install unknown apps" with a download waiting */
