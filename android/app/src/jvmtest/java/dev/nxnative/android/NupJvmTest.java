@@ -183,6 +183,15 @@ public final class NupJvmTest {
         check(Nup.open(nu).base() == null && Pack.isDump(nu) && DumpLayout.versions(nu).equals(List.of(458752L)), "an update-only .nup that carries the whole game (its exefs and RomFS): a dump of that update (DumpLayout)");
         check(Pack.isDump(new File(t, "game-raw.nup")), "a .nup with the base and an update: a dump");
         check(!Pack.isDump(new File(t, "missing.nup")), "a .nup that is not there");
+        // A base package without code (a RomFS only), whose record names no title (0), and an update that carries the game (Pokopia 327680's .nup): the
+        // program ID is the update's main.npdm, as the packer reads it (pack_dump.py nup_scan), not the base record's 0
+        File s = new File(t, "StubBase");
+        write(new File(s, "base/romfs/Pack/zeros.bin"), new byte[16]);
+        for (String f : new String[] {"exefs/main", "exefs/main.npdm", "romfs/Pack/zeros.bin"})
+            write(new File(s, "updates/458752/" + f), bytes(new File(d, "updates/458752/" + f)));
+        Nup sb = Nup.open(pack(repo, s, new File(t, "StubBase.nup"), "python3", true));
+        check(sb.base() != null && sb.base().titleId == 0 && sb.base().exefsDir == Nup.NONE, "the stub base: no exefs, title ID 0 in its record");
+        check(sb.programId().equals(TID) && Pack.titleIdOf(new File(t, "StubBase.nup")).equals(TID), "a stub base's .nup: the update's program ID, not 0000000000000000: " + sb.programId());
     }
 
     // ---- Names ----

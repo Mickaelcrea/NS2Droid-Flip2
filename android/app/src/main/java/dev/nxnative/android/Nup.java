@@ -336,16 +336,25 @@ final class Nup {
     Pkg resolve(String selector) { return selector == null ? newest() : find(selector); }
 
     /**
-     * The game's program ID (16 upper-case hex digits): the base package's main.npdm (its ACI0, as for a folder), else the base's record, else the first
-     * update's (an update-only .nup). The NPDM is what the folder path reads; the record is the dump tool's verbatim ID
+     * The game's program ID (16 upper-case hex digits), as the packer's scan takes it (pack_dump.py nup_scan): the base package's main.npdm (its ACI0, as for a
+     * folder), else the newest update's that has one (a base package without code: Pokopia's, whose update carries the whole game), else the first of those
+     * packages' records that names a title (the dump tool's verbatim ID). A base record of 0 is not taken for the game's ID: such a .nup was refused as
+     * "this app version does not include this game (0000000000000000)" while the packer read 0400A3A01EE4C000 from its update
      */
     String programId() throws IOException {
-        Pkg p = base();
-        if (p == null) p = newest();
-        if (p == null) throw new IOException(file.getName() + " has neither a base package nor an update");
-        Node npdm = lookup(p, "exefs/main.npdm");
-        if (npdm != null && !npdm.dir) return Pack.programId(read(npdm, -1), file.getName() + ":" + p.selector() + "/exefs/main.npdm");
-        return String.format(Locale.ROOT, "%016X", p.titleId);
+        List<Pkg> code = new ArrayList<>();
+        Pkg b = base();
+        if (b != null) code.add(b);
+        List<Pkg> updates = of(UPDATE);
+        Collections.sort(updates, (x, y) -> Long.compare(y.version, x.version));
+        code.addAll(updates);
+        if (code.isEmpty()) throw new IOException(file.getName() + " has neither a base package nor an update");
+        for (Pkg p : code) {
+            Node npdm = lookup(p, "exefs/main.npdm");
+            if (npdm != null && !npdm.dir) return Pack.programId(read(npdm, -1), file.getName() + ":" + p.selector() + "/exefs/main.npdm");
+        }
+        for (Pkg p : code) if (p.titleId != 0) return String.format(Locale.ROOT, "%016X", p.titleId);
+        throw new IOException(file.getName() + ": no package with exefs/main.npdm and no title ID in its records");
     }
 
     // ---- The tree ----
