@@ -40,6 +40,11 @@ mem_used	0x5600000
 # docked at scale 1 it starts at level 24 (1728x972), docked at scale 0 at 30, handheld at 20 (1600x900). The host lowers the lists that start above DM_WINDOW_SIZE
 # (the Android launcher's Game resolution; loader.c levels_apply), the table stays: the game's own maximum must stay, or the terrain breaks (the game note, Render size)
 res_levels	76a489f3bd3642fa5e18bd83d32c98ba	0x2849658	34	0x2804ff0:8	0x2805160:8	0x2805198:8	0x2805458:8	0x28055c0:8	0x2808b60:9	0x2808b69:10	0x2808b73:9	0x2808b7c:9
+# Update 327680 (an untested build, packed with Try anyway), main build 816c5358…: the same table and nine lists, found in its main (NS2Droid-Flip2, 2026-11-10).
+# The table at main+0x2756530 (heights at +0x27565b8: the getters at main+0x103a1e0 / +0x103a220); the lists picked at main+0x1fb7a0..0x1fb93c, adrp+add each, with
+# their last index in w9 (mov #7: 8 bytes; #8 for +0x2717528; cinc to 9 bytes for +0x271753b and +0x2717544; #9: 10 bytes for +0x2717531). Contents as in 655360:
+# 24..17, 10..3, 8..1, 22..15, 30..23, then the handheld group 20,14..7 / 20..11 / 14..6 / 12..4, contiguous (9+10+9+9) as 655360's at +0x2808b60
+res_levels	816c5358e8178d802fcec4a7ce5a741a	0x2756530	34	0x2714158:8	0x27142a0:8	0x27142e0:8	0x2714588:8	0x27146f8:8	0x2717528:9	0x2717531:10	0x271753b:9	0x2717544:9
 android_window	1280x720
 
 # ---- Presentation ----
